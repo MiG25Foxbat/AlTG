@@ -4,8 +4,14 @@ import { Api } from 'telegram/tl';
 import { API_CONFIG } from '../../config/botConfig';
 import { logger } from '../../utils/logger';
 import { sleep } from '../../utils/helpers';
+import { collectMessagesInWindow, CollectedMessage } from './windowPagination';
+import { IUserBotReader } from './IUserBotReader';
 
-export class UserBot {
+export type { CollectedMessage } from './windowPagination';
+
+const DEFAULT_PAGE_SIZE = 100;
+
+export class UserBot implements IUserBotReader {
   public client: TelegramClient;
 
   constructor(sessionString: string) {
@@ -35,7 +41,60 @@ export class UserBot {
     return this.client.getMessages(channel, { limit });
   }
 
+  /**
+   * Проверяет, что публичный канал существует и доступен, и возвращает
+   * его отображаемое имя. Используется при добавлении канала через API,
+   * чтобы не хранить в базе "мёртвые" username.
+   */
+  async resolveChannel(channel: string): Promise<{ title: string | null } | null> {
+    try {
+      const entity: any = await this.client.getEntity(channel);
+      const title: string | null = entity?.title ?? entity?.username ?? null;
+      return { title };
+    } catch (error: any) {
+      logger.warn(`Не удалось найти канал ${channel}:`, error?.errorMessage || error?.message || error);
+      return null;
+    }
+  }
+
+  /**
+   * Забирает все посты канала не старше cutoffUnixSeconds, постранично
+   * идя вглубь истории, пока не встретит пост старше отсечки, пустую
+   * страницу или лимит maxMessages (защита от неограниченного вытягивания
+   * истории очень активного канала на большом окне вроде 10 часов).
+   * Посты без текста (альбомы фото/видео без подписи и т.п.) отбрасываются —
+   * суммаризатору из них нечего брать.
+   */
+  async getMessagesInWindow(
+    channel: string,
+    cutoffUnixSeconds: number,
+    maxMessages = 500
+  ): Promise<CollectedMessage[]> {
+    return collectMessagesInWindow(
+      async (offsetId) => {
+        const page = await this.client.getMessages(channel, {
+          limit: DEFAULT_PAGE_SIZE,
+          offsetId: offsetId || undefined,
+        });
+        return (page as any[]).map((m) => ({ id: m.id, message: m.message, date: m.date }));
+      },
+      cutoffUnixSeconds,
+      maxMessages
+    );
+  }
+
+  /*
+   * --- Реакции и комментарии отключены на время тестирования ---
+   * Сейчас бот работает только на чтение: собирает посты и отдаёт их на
+   * суммаризацию. Автоматические реакции/комментарии не нужны для этой
+   * задачи и могут увеличивать риск ограничений на аккаунте, поэтому
+   * логика ниже закомментирована, а не удалена — её легко вернуть,
+   * раскомментировав тело методов, когда/если эта функциональность
+   * снова понадобится (см. также CommentModule и старый src/index.ts).
+   */
   async reactToPost(channelId: string, messageId: number, reaction: string) {
+    logger.warn(`reactToPost() отключён в тестовом режиме, вызов для ${channelId}/${messageId} проигнорирован`);
+    /*
     try {
       await this.client.invoke(new Api.messages.SendReaction({
         peer: channelId,
@@ -54,9 +113,13 @@ export class UserBot {
         logger.error(`Error reacting to post ${messageId} in ${channelId}:`, error);
       }
     }
+    */
   }
 
   async commentOnPost(channelId: string, messageId: number, comment: string): Promise<boolean> {
+    logger.warn(`commentOnPost() отключён в тестовом режиме, вызов для ${channelId}/${messageId} проигнорирован`);
+    return false;
+    /*
     try {
       const result = await this.client.invoke(new Api.messages.GetDiscussionMessage({
         peer: channelId,
@@ -90,6 +153,7 @@ export class UserBot {
       }
       return false;
     }
+    */
   }
 
   async joinChannel(channelId: string) {

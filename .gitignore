@@ -18,6 +18,12 @@ yarn-error.log*
 .env.local
 .env.*.local
 
+# Локальная база данных
+/data/*.db
+/data/*.db-journal
+/data/*.db-wal
+/data/*.db-shm
+
 # Редакторы и IDE
 .vscode/
 .idea/

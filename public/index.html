@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Telegram-алерты — тест</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app__header">
+      <h1>Telegram-алерты</h1>
+      <p class="app__subtitle">Поиск и суммаризация постов из открытых каналов</p>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tabs__btn is-active" data-tab="search" role="tab" aria-selected="true">Поиск</button>
+      <button class="tabs__btn" data-tab="channels" role="tab" aria-selected="false">Каналы <span id="channelsCount" class="tabs__badge"></span></button>
+    </nav>
+
+    <!-- ===== Вкладка "Поиск" ===== -->
+    <section id="tab-search" class="tab is-active">
+
+      <div class="field">
+        <label class="field__label">За какое время смотреть</label>
+        <div id="windowOptions" class="chips" role="radiogroup" aria-label="Период"></div>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="topicInput">Тема</label>
+        <input
+          id="topicInput"
+          class="text-input"
+          type="text"
+          maxlength="200"
+          placeholder="Например: рост доллара, новости о Bitcoin, поддержка малого бизнеса"
+          autocomplete="off"
+        />
+      </div>
+
+      <button id="searchBtn" class="btn btn--primary btn--block">Найти новости</button>
+
+      <div id="searchHint" class="hint" hidden></div>
+
+      <div id="loading" class="loading" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <span>Собираю посты и анализирую тему — обычно это 5–20 секунд…</span>
+      </div>
+
+      <div id="errorBanner" class="banner banner--error" hidden></div>
+
+      <div id="resultMeta" class="result-meta" hidden></div>
+
+      <div id="summaryCard" class="summary-card" hidden>
+        <div class="summary-card__label">Итог</div>
+        <p id="summaryText"></p>
+      </div>
+
+      <div id="itemsList" class="items-list"></div>
+
+      <div id="emptyState" class="empty-state" hidden>
+        Ничего подходящего не нашлось за этот период. Попробуйте увеличить период или переформулировать тему.
+      </div>
+    </section>
+
+    <!-- ===== Вкладка "Каналы" ===== -->
+    <section id="tab-channels" class="tab">
+      <div class="field">
+        <label class="field__label" for="channelInput">Добавить открытый канал</label>
+        <div class="add-row">
+          <input
+            id="channelInput"
+            class="text-input"
+            type="text"
+            placeholder="@channel_name или ссылка t.me/channel_name"
+            autocomplete="off"
+          />
+          <button id="addChannelBtn" class="btn btn--primary">Добавить</button>
+        </div>
+        <div id="addChannelError" class="field__error" hidden></div>
+      </div>
+
+      <ul id="channelsList" class="channels-list"></ul>
+      <div id="channelsEmpty" class="empty-state" hidden>
+        Пока нет ни одного канала. Добавьте первый выше — пока поддерживаются только открытые каналы.
+      </div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

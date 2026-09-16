@@ -1,26 +1,31 @@
 {
   "name": "telegram-userbot",
   "version": "1.0.0",
-  "description": "Telegram userbot for automatic reactions",
+  "description": "Telegram userbot: чтение постов из публичных каналов, фильтр по теме и суммаризация через Gemini",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "ts-node src/server.ts",
+    "dev": "ts-node src/server.ts",
+    "legacy-bot": "ts-node src/index.ts",
     "build": "tsc",
-    "dev": "ts-node src/index.ts",
-    "generate-session": "ts-node src/generateSession.ts"
+    "generate-session": "ts-node src/generateSession.ts",
+    "test": "node --require ts-node/register --test src/tests/keywordFilter.test.ts src/tests/time.test.ts src/tests/windowMessages.test.ts src/tests/api.test.ts"
   },
   "dependencies": {
     "dotenv": "^16.3.1",
+    "express": "^5.2.1",
+    "open": "^11.0.3",
     "prompts": "^2.4.2",
     "telegram": "^2.19.14"
   },
   "devDependencies": {
-    "@types/node": "^20.8.2",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.3",
     "@types/prompts": "^2.4.4",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2"
   },
   "engines": {
-    "node": ">=20.5.0"
+    "node": ">=22.13.0"
   }
 }
