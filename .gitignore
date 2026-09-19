@@ -20,6 +20,7 @@ yarn-error.log*
 
 # Локальная база данных
 /data/*.db
+/data/*.db.backup
 /data/*.db-journal
 /data/*.db-wal
 /data/*.db-shm

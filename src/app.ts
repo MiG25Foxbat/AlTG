@@ -7,6 +7,7 @@ import {
   removeChannel,
   normalizeChannelUsername,
 } from './db/channelsRepo';
+import { getOrCreateSoleUser } from './db/usersRepo';
 import { analyzeTopic } from './modules/AiModule/analyzeService';
 import { GeminiConfigError, GeminiQuotaError } from './modules/AiModule/geminiClient';
 import { InvalidTimeWindowError, TIME_WINDOW_OPTIONS } from './utils/time';
@@ -15,20 +16,22 @@ import { logger } from './utils/logger';
 
 /**
  * Собирает Express-приложение без побочных эффектов (не слушает порт,
- * не трогает process.env, не подключается к Telegram сама). Разделено с
- * server.ts специально, чтобы в тестах (src/tests/api.test.ts) можно было
- * поднять приложение с фейковым userBot и проверить весь HTTP-слой без
- * реального аккаунта Telegram.
+ * не трогает process.env, не подключается к Telegram сама). userId
+ * резолвится один раз здесь через getOrCreateSoleUser() — прототип
+ * работает как один локальный оператор без экрана логина (см.
+ * docs/tech-stack-final.md), но всё под капотом уже per-user-scoped.
  */
-export function createApp(userBot: IUserBotReader) {
+export async function createApp(userBot: IUserBotReader) {
+  const userId = await getOrCreateSoleUser();
+
   const app = express();
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   // --- Каналы ---
 
-  app.get('/api/channels', (_req, res) => {
-    res.json(listChannels());
+  app.get('/api/channels', async (_req, res) => {
+    res.json(await listChannels(userId));
   });
 
   app.post('/api/channels', async (req: Request, res: Response) => {
@@ -40,7 +43,7 @@ export function createApp(userBot: IUserBotReader) {
       return res.status(400).json({ error: error.message });
     }
 
-    const existing = listChannels().find((c) => c.username === username);
+    const existing = (await listChannels(userId)).find((c) => c.username === username);
     if (existing) {
       return res.status(409).json({ error: `Канал ${username} уже добавлен` });
     }
@@ -52,23 +55,23 @@ export function createApp(userBot: IUserBotReader) {
       });
     }
 
-    const channel = upsertChannel(username, resolved.title);
+    const channel = await upsertChannel(userId, username, resolved.title);
     res.status(201).json(channel);
   });
 
-  app.patch('/api/channels/:username', (req: Request, res: Response) => {
+  app.patch('/api/channels/:username', async (req: Request, res: Response) => {
     const username = normalizeChannelUsername(String(req.params.username));
     const isActive = Boolean(req.body?.isActive);
-    const updated = setChannelActive(username, isActive);
+    const updated = await setChannelActive(userId, username, isActive);
     if (!updated) {
       return res.status(404).json({ error: `Канал ${username} не найден` });
     }
     res.json(updated);
   });
 
-  app.delete('/api/channels/:username', (req: Request, res: Response) => {
+  app.delete('/api/channels/:username', async (req: Request, res: Response) => {
     const username = normalizeChannelUsername(String(req.params.username));
-    const removed = removeChannel(username);
+    const removed = await removeChannel(userId, username);
     if (!removed) {
       return res.status(404).json({ error: `Канал ${username} не найден` });
     }
@@ -90,11 +93,13 @@ export function createApp(userBot: IUserBotReader) {
     if (!topic) {
       return res.status(400).json({ error: 'Введите тему запроса' });
     }
-    if (listChannels().filter((c) => c.isActive).length === 0) {
-      return res.status(400).json({ error: 'Нет ни одного активного канала — добавьте канал во вкладке «Каналы»' });
+    if ((await listChannels(userId)).filter((c) => c.isActive).length === 0) {
+      return res
+        .status(400)
+        .json({ error: 'Нет ни одного активного канала — добавьте канал во вкладке «Каналы»' });
     }
 
-    const result = await analyzeTopic(userBot, topic, windowMinutes);
+    const result = await analyzeTopic(userBot, userId, topic, windowMinutes);
     res.json(result);
   });
 

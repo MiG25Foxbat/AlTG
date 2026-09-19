@@ -1,4 +1,4 @@
-import { TelegramClient } from 'telegram';
+import { TelegramClient } from 'teleproto';
 
 export interface IUserBot {
   client: TelegramClient;

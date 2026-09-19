@@ -40,18 +40,19 @@ function toLink(channel: string, messageId: number): string {
 
 export async function analyzeTopic(
   userBot: IUserBotReader,
+  userId: number,
   topic: string,
   windowMinutes: number
 ): Promise<AnalyzeResult> {
   const startedAt = Date.now();
   const cutoff = windowMinutesToCutoff(windowMinutes);
 
-  const fetchResults: ChannelFetchResult[] = await fetchRecentPosts(userBot, cutoff);
+  const fetchResults: ChannelFetchResult[] = await fetchRecentPosts(userBot, userId, cutoff);
   const channelErrors = fetchResults
     .filter((r) => r.error)
     .map((r) => ({ channel: r.channel, error: r.error! }));
 
-  const posts: PostRow[] = getPostsSince(cutoff, POSTS_FETCHED_FROM_DB_CAP);
+  const posts: PostRow[] = await getPostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP);
 
   const baseResult = {
     windowMinutes,
@@ -87,7 +88,7 @@ export async function analyzeTopic(
     candidates.map((post, index) => ({ index, text: post.text }))
   );
 
-  const channelTitles = new Map(listChannels().map((c) => [c.username, c.title]));
+  const channelTitles = new Map((await listChannels(userId)).map((c) => [c.username, c.title]));
 
   const items: ResultItem[] = aiResult.relevant
     .filter((r) => candidates[r.index] !== undefined)

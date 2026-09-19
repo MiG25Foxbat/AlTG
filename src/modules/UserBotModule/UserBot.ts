@@ -1,6 +1,6 @@
-import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions';
-import { Api } from 'telegram/tl';
+import { TelegramClient } from 'teleproto';
+import { StringSession } from 'teleproto/sessions';
+import { Api } from 'teleproto/tl';
 import { API_CONFIG } from '../../config/botConfig';
 import { logger } from '../../utils/logger';
 import { sleep } from '../../utils/helpers';

@@ -47,9 +47,13 @@ Telegram Mini App (это в планах, не реализовано).
 - Рантайм: Node.js >=22.13.0, TypeScript, `ts-node` (без сборки для
   разработки; `npm run build` → `tsc` → `dist/` только для прод-запуска)
 - Backend: Express 5
-- БД: **`node:sqlite`** (`DatabaseSync`), не `better-sqlite3` — сознательный
-  выбор, см. раздел "Известные грабли" ниже
-- Telegram: `telegram` (GramJS), MTProto-юзербот, не Bot API
+- БД: **`@libsql/client`** (Turso/libSQL) — многопользовательская схема
+  (`users`/`telegram_accounts`/`topics`/`user_channels`/`public_posts`/
+  `private_posts`/`activity_log`), подробности в `docs/tech-stack-final.md`.
+  `url` — локальный файл (`DB_PATH`, по умолчанию) или `TURSO_DATABASE_URL`
+  для прода; `telegram` (GramJS) заменён на `teleproto` (GramJS
+  заархивирован, см. раздел "Известные грабли")
+- Telegram: `teleproto` (GramJS форк), MTProto-юзербот, не Bot API
 - ИИ: Gemini REST API напрямую через `fetch` (без SDK) — весь код вызова
   ИИ изолирован в `src/modules/AiModule/geminiClient.ts`, чтобы смена
   провайдера (Groq, GigaChat) была правкой одного файла
@@ -63,7 +67,7 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 28 тестов
+npm test             # node:test, 44 теста
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register
@@ -79,9 +83,12 @@ src/
   server.ts              # запуск app.ts, открывает браузер (open)
   index.ts               # legacy: старый CLI-вход бота реакций/комментариев
   db/
-    database.ts           # getDb() — singleton node:sqlite, схема
-    channelsRepo.ts        # CRUD каналов + нормализация username
-    postsRepo.ts            # вставка постов (дедуп по UNIQUE), выборка по времени
+    database.ts             # getDb() — singleton @libsql/client, новая схема
+    channelsRepo.ts          # CRUD user_channels + нормализация username
+    postsRepo.ts               # вставка/выборка public_posts
+    usersRepo.ts                 # getOrCreateSoleUser() — мост без экрана логина
+    telegramAccountsRepo.ts        # CRUD telegram_accounts, шифрование на границе
+    bootstrap.ts                     # ensureDefaultUser() + перенос старых channels/posts
   modules/
     UserBotModule/
       UserBot.ts            # обёртка над GramJS-клиентом; реакции/комменты закомментированы
@@ -93,7 +100,9 @@ src/
       geminiClient.ts        # единственное место с HTTP-вызовами к Gemini
       analyzeService.ts       # вторая ступень: релевантность + саммари
   utils/time.ts            # парсинг пресетов времени (5м…10ч) в unix-диапазоны
-  tests/                  # keywordFilter, time, windowMessages, api — 28 тестов
+  tests/                  # keywordFilter, time, windowMessages, api, crypto,
+                          # database, accounts, channelsRepo, postsRepo,
+                          # bootstrap — 44 теста
 public/
   index.html, style.css, app.js   # вкладки: каналы / поиск-по-теме / результаты
 docs/
@@ -104,7 +113,8 @@ docs/
 ## Правила безопасности с credentials — соблюдать всегда
 
 `SESSION_STRING` — это фактически полный доступ к Telegram-аккаунту,
-`GEMINI_API_KEY` — платёжный доступ к API. Оба:
+`GEMINI_API_KEY` — платёжный доступ к API, `SESSION_ENCRYPTION_KEY` —
+ключ шифрования для конфиденциальных полей в БД. Все три:
 
 - живут только в `.env` (в `.gitignore`) или в переменных окружения
   хостинга (Render → Environment)
@@ -133,22 +143,29 @@ docs/
 ## Известные грабли (уже решённые — не наступать снова)
 
 - **`better-sqlite3` на Windows падает при `npm install`** без Visual
-  Studio C++ Build Tools (нативная сборка). Решено переходом на встроенный
-  `node:sqlite` — держать этот выбор, не откатывать на `better-sqlite3`
-  без веской причины.
-- `node:sqlite` не даёт `.pragma()` и `.transaction()`, как
-  `better-sqlite3` — вместо pragma используется `db.exec('PRAGMA ...')`,
-  вместо `.transaction()` — ручной `BEGIN/COMMIT/ROLLBACK` (см.
-  `postsRepo.ts`). `.all()/.get()` возвращают
-  `Record<string, SQLOutputValue>`, поэтому в репозиториях стоят
-  `as unknown as X` касты — это осознанно, не баг типизации.
-- **Репозиторий GramJS (`gram-js/gramjs`) заархивирован 14 июля 2026 года,
-  read-only.** Решение зафиксировано в `docs/tech-stack-final.md` (раздел
-  3): переходить на `teleproto` — активно поддерживаемый форк, обратно
-  совместимый по API и по формату `session string` (замена импорта
-  `"telegram"` → `"teleproto"` в большинстве мест). Не откладывать эту
-  миграцию как "когда-нибудь" — зависимость `telegram` в `package.json`
-  сейчас указывает на неподдерживаемую библиотеку.
+  Studio C++ Build Tools (нативная сборка). Именно поэтому в проекте
+  используется `@libsql/client` — он поставляет прекомпилированные
+  бинарники под все платформы, включая Windows, и эта проблема больше не
+  возникает. Не заменять на `better-sqlite3` без веской причины.
+- **`gram-js/gramjs` был заархивирован 14 июля 2026 года — сделано.**
+  Зависимость заменена на `teleproto` (см. `docs/tech-stack-final.md`,
+  раздел 3). Импорты `from "teleproto"`, формат session string тот же.
+- **`@libsql/client` в local-file режиме держит пул до 20 соединений** —
+  `PRAGMA foreign_keys = ON`, выполненная через `execute()`, применяется
+  только к одному соединению из пула, а не ко всем. Решено передачей
+  `concurrency: 1` в `createClient()` (см. `src/db/database.ts`) — один
+  коннект гарантирует, что `ON DELETE CASCADE` в схеме реально работает.
+  Не убирать `concurrency: 1` без замены на другой способ применить
+  pragma ко всем соединениям пула.
+- **встроенные `.d.ts` из `teleproto` конфликтуют по типам с TypeScript
+  5.2.2** — `Buffer` используется как generic (ошибки TS2315 в 45+ местах),
+  отсутствуют алиасы типов (`InlineKeyboard`, `ReplyKeyboard` в
+  `define.d.ts`). Эти ошибки всплывают на этапе разрешения модулей, поэтому
+  `@ts-expect-error` над строкой импорта их не гасит; на поведение в
+  рантайме они не влияют, все тесты проходят. Решение: `"skipLibCheck":
+  true` в `tsconfig.json` отключает валидацию `.d.ts` для node_modules.
+  Держать этот флаг — стандартный обход проблем с типизацией сторонней
+  библиотеки. Не убирать без повторной проверки тайпингов `teleproto`.
 
 ## Тестовая стратегия проекта
 

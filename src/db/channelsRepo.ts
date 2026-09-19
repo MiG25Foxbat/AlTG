@@ -1,10 +1,12 @@
 import { getDb } from './database';
 
 export interface ChannelRow {
-  username: string;
-  title: string | null;
-  added_at: number;
+  user_id: number;
+  channel_identifier: string;
+  channel_title: string | null;
+  is_private: 0 | 1;
   is_active: 0 | 1;
+  added_at: number;
 }
 
 export interface ChannelDto {
@@ -12,14 +14,16 @@ export interface ChannelDto {
   title: string | null;
   addedAt: number;
   isActive: boolean;
+  isPrivate: boolean;
 }
 
 function toDto(row: ChannelRow): ChannelDto {
   return {
-    username: row.username,
-    title: row.title,
+    username: row.channel_identifier,
+    title: row.channel_title,
     addedAt: row.added_at,
     isActive: row.is_active === 1,
+    isPrivate: row.is_private === 1,
   };
 }
 
@@ -37,48 +41,78 @@ export function normalizeChannelUsername(raw: string): string {
   return `@${value}`;
 }
 
-export function listChannels(): ChannelDto[] {
-  const rows = getDb()
-    .prepare('SELECT * FROM channels ORDER BY added_at DESC')
-    .all() as unknown as ChannelRow[];
-  return rows.map(toDto);
+export async function listChannels(userId: number): Promise<ChannelDto[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM user_channels WHERE user_id = ? ORDER BY added_at DESC',
+    args: [userId],
+  });
+  return (result.rows as unknown as ChannelRow[]).map(toDto);
 }
 
-export function listActiveChannelUsernames(): string[] {
-  const rows = getDb()
-    .prepare('SELECT username FROM channels WHERE is_active = 1')
-    .all() as unknown as { username: string }[];
-  return rows.map((r) => r.username);
+export async function listActiveChannelUsernames(userId: number): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1',
+    args: [userId],
+  });
+  return (result.rows as unknown as { channel_identifier: string }[]).map(
+    (r) => r.channel_identifier
+  );
 }
 
-export function getChannel(username: string): ChannelDto | undefined {
-  const row = getDb()
-    .prepare('SELECT * FROM channels WHERE username = ?')
-    .get(username) as unknown as ChannelRow | undefined;
+export async function getChannel(
+  userId: number,
+  identifier: string
+): Promise<ChannelDto | undefined> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT * FROM user_channels WHERE user_id = ? AND channel_identifier = ?',
+    args: [userId, identifier],
+  });
+  const row = result.rows[0] as unknown as ChannelRow | undefined;
   return row ? toDto(row) : undefined;
 }
 
-export function upsertChannel(username: string, title: string | null): ChannelDto {
-  const db = getDb();
-  const existing = getChannel(username);
+export async function upsertChannel(
+  userId: number,
+  identifier: string,
+  title: string | null
+): Promise<ChannelDto> {
+  const db = await getDb();
+  const existing = await getChannel(userId, identifier);
   if (existing) {
-    db.prepare('UPDATE channels SET title = COALESCE(?, title) WHERE username = ?').run(title, username);
+    await db.execute({
+      sql: 'UPDATE user_channels SET channel_title = COALESCE(?, channel_title) WHERE user_id = ? AND channel_identifier = ?',
+      args: [title, userId, identifier],
+    });
   } else {
-    db.prepare('INSERT INTO channels (username, title, added_at, is_active) VALUES (?, ?, ?, 1)').run(
-      username,
-      title,
-      Math.floor(Date.now() / 1000)
-    );
+    await db.execute({
+      sql: 'INSERT INTO user_channels (user_id, channel_identifier, channel_title, added_at, is_active) VALUES (?, ?, ?, ?, 1)',
+      args: [userId, identifier, title, Math.floor(Date.now() / 1000)],
+    });
   }
-  return getChannel(username)!;
+  return (await getChannel(userId, identifier))!;
 }
 
-export function setChannelActive(username: string, isActive: boolean): ChannelDto | undefined {
-  getDb().prepare('UPDATE channels SET is_active = ? WHERE username = ?').run(isActive ? 1 : 0, username);
-  return getChannel(username);
+export async function setChannelActive(
+  userId: number,
+  identifier: string,
+  isActive: boolean
+): Promise<ChannelDto | undefined> {
+  const db = await getDb();
+  await db.execute({
+    sql: 'UPDATE user_channels SET is_active = ? WHERE user_id = ? AND channel_identifier = ?',
+    args: [isActive ? 1 : 0, userId, identifier],
+  });
+  return getChannel(userId, identifier);
 }
 
-export function removeChannel(username: string): boolean {
-  const result = getDb().prepare('DELETE FROM channels WHERE username = ?').run(username);
-  return result.changes > 0;
+export async function removeChannel(userId: number, identifier: string): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'DELETE FROM user_channels WHERE user_id = ? AND channel_identifier = ?',
+    args: [userId, identifier],
+  });
+  return result.rowsAffected > 0;
 }
