@@ -67,7 +67,7 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 28 тестов
+npm test             # node:test, 44 теста
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register
@@ -100,7 +100,9 @@ src/
       geminiClient.ts        # единственное место с HTTP-вызовами к Gemini
       analyzeService.ts       # вторая ступень: релевантность + саммари
   utils/time.ts            # парсинг пресетов времени (5м…10ч) в unix-диапазоны
-  tests/                  # keywordFilter, time, windowMessages, api — 28 тестов
+  tests/                  # keywordFilter, time, windowMessages, api, crypto,
+                          # database, accounts, channelsRepo, postsRepo,
+                          # bootstrap — 44 теста
 public/
   index.html, style.css, app.js   # вкладки: каналы / поиск-по-теме / результаты
 docs/
@@ -141,15 +143,10 @@ docs/
 ## Известные грабли (уже решённые — не наступать снова)
 
 - **`better-sqlite3` на Windows падает при `npm install`** без Visual
-  Studio C++ Build Tools (нативная сборка). Решено переходом на встроенный
-  `node:sqlite` — держать этот выбор, не откатывать на `better-sqlite3`
-  без веской причины.
-- `node:sqlite` не даёт `.pragma()` и `.transaction()`, как
-  `better-sqlite3` — вместо pragma используется `db.exec('PRAGMA ...')`,
-  вместо `.transaction()` — ручной `BEGIN/COMMIT/ROLLBACK` (см.
-  `postsRepo.ts`). `.all()/.get()` возвращают
-  `Record<string, SQLOutputValue>`, поэтому в репозиториях стоят
-  `as unknown as X` касты — это осознанно, не баг типизации.
+  Studio C++ Build Tools (нативная сборка). Именно поэтому в проекте
+  используется `@libsql/client` — он поставляет прекомпилированные
+  бинарники под все платформы, включая Windows, и эта проблема больше не
+  возникает. Не заменять на `better-sqlite3` без веской причины.
 - **`gram-js/gramjs` был заархивирован 14 июля 2026 года — сделано.**
   Зависимость заменена на `teleproto` (см. `docs/tech-stack-final.md`,
   раздел 3). Импорты `from "teleproto"`, формат session string тот же.
@@ -160,15 +157,15 @@ docs/
   коннект гарантирует, что `ON DELETE CASCADE` в схеме реально работает.
   Не убирать `concurrency: 1` без замены на другой способ применить
   pragma ко всем соединениям пула.
-- **teleproto's bundled `.d.ts` has type definition compatibility issues
-  with TypeScript 5.2.2** — Buffer is used as generic (TS2315 errors in 45+
-  places), missing type aliases (InlineKeyboard, ReplyKeyboard in define.d.ts).
-  These errors surface during module resolution (not fixable with
-  `@ts-expect-error` on import lines), don't affect runtime behavior, and all
-  tests pass. Solution: `"skipLibCheck": true` in `tsconfig.json` suppresses
-  .d.ts validation for node_modules. Keep this flag — it's the standard
-  workaround for library type definition issues. Don't remove without
-  re-checking teleproto's typings first.
+- **встроенные `.d.ts` из `teleproto` конфликтуют по типам с TypeScript
+  5.2.2** — `Buffer` используется как generic (ошибки TS2315 в 45+ местах),
+  отсутствуют алиасы типов (`InlineKeyboard`, `ReplyKeyboard` в
+  `define.d.ts`). Эти ошибки всплывают на этапе разрешения модулей, поэтому
+  `@ts-expect-error` над строкой импорта их не гасит; на поведение в
+  рантайме они не влияют, все тесты проходят. Решение: `"skipLibCheck":
+  true` в `tsconfig.json` отключает валидацию `.d.ts` для node_modules.
+  Держать этот флаг — стандартный обход проблем с типизацией сторонней
+  библиотеки. Не убирать без повторной проверки тайпингов `teleproto`.
 
 ## Тестовая стратегия проекта
 

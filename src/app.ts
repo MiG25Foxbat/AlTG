@@ -104,6 +104,7 @@ export async function createApp(userBot: IUserBotReader) {
   });
 
   // --- Обработка ошибок ---
+  // Express 5 сам пробрасывает сюда отклонённые промисы из async-хендлеров выше.
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof InvalidTimeWindowError) {
       return res.status(400).json({ error: err.message });

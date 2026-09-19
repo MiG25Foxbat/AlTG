@@ -10,7 +10,7 @@ function ensureDirExists(filePath: string) {
   }
 }
 
-let db: Client | null = null;
+let dbPromise: Promise<Client> | null = null;
 
 /**
  * Возвращает singleton-клиент БД (Turso/libSQL) и гарантирует, что новая
@@ -25,10 +25,22 @@ let db: Client | null = null;
  * котором была выполнена — на пуле >1 это не гарантирует ON DELETE
  * CASCADE на каждом запросе. Один коннект убирает риск целиком; для
  * нагрузки одного локального процесса это не бутылочное горлышко.
+ *
+ * Кэшируется именно Promise, а не разрешённый клиент: если кэшировать
+ * клиент, то конкурентный вызов, пришедший между `createClient()` и
+ * концом `await db.batch(...)` (создание схемы), пройдёт мимо проверки
+ * "клиент уже есть" и получит клиент с ещё не созданными таблицами.
+ * Кэш промиса гарантирует, что все вызовы — и параллельные тоже —
+ * ждут одного и того же завершения инициализации.
  */
 export async function getDb(): Promise<Client> {
-  if (db) return db;
+  if (dbPromise) return dbPromise;
 
+  dbPromise = initDb();
+  return dbPromise;
+}
+
+async function initDb(): Promise<Client> {
   const dbPath = process.env.DB_PATH || './data/app.db';
   const url =
     process.env.TURSO_DATABASE_URL || (dbPath === ':memory:' ? ':memory:' : `file:${dbPath}`);
@@ -36,7 +48,7 @@ export async function getDb(): Promise<Client> {
     ensureDirExists(dbPath);
   }
 
-  db = createClient({
+  const db = createClient({
     url,
     authToken: process.env.TURSO_AUTH_TOKEN,
     concurrency: 1,
@@ -118,8 +130,8 @@ export async function getDb(): Promise<Client> {
 }
 
 export function closeDb() {
-  if (db) {
-    db.close();
-    db = null;
-  }
+  if (!dbPromise) return;
+  const pending = dbPromise;
+  dbPromise = null;
+  pending.then((client) => client.close()).catch(() => {});
 }

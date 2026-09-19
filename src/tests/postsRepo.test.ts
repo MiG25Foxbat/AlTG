@@ -35,3 +35,40 @@ test('postsRepo: insertPosts дедуплицирует по (channel, message_i
 
   closeDb();
 });
+
+test('postsRepo: getPostsSince не отдаёт пользователю A посты канала, активного только у пользователя B (изоляция по user_channels.user_id в JOIN)', async () => {
+  const userA = await getOrCreateSoleUser();
+  // У A свой собственный канал, никак не связанный с @activechan ниже —
+  // если предикат user_id по ошибке уберут из JOIN, чужой активный канал
+  // не должен "просочиться" в выдачу A даже при непустом списке своих.
+  await upsertChannel(userA, '@ownchan', 'Own channel for A');
+
+  // getOrCreateSoleUser всегда возвращает одного и того же пользователя в
+  // этом прототипе — здесь вставляем второго пользователя напрямую через
+  // getDb(), как в channelsRepo.test.ts, чтобы проверить именно предикат
+  // user_channels.user_id = ? в JOIN внутри getPostsSince.
+  const { getDb } = await import('../db/database');
+  const db = await getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const insertResult = await db.execute({
+    sql: 'INSERT INTO users (created_at, status, last_active_at) VALUES (?, ?, ?)',
+    args: [now, 'active', now],
+  });
+  const userB = Number(insertResult.lastInsertRowid);
+  // У B — своя запись user_channels на @activechan (имя специально
+  // совпадает с активным каналом из первого теста этого файла). A эту
+  // запись не создавал и на канал не подписан.
+  await upsertChannel(userB, '@activechan', 'Active for B');
+
+  await insertPosts([
+    { channelUsername: '@activechan', messageId: 999, text: 'пост из канала B', postedAt: now },
+  ]);
+
+  const postsForA = await getPostsSince(userA, now - 3600, 100);
+  assert.ok(
+    postsForA.every((p) => p.message_id !== 999),
+    'пост из канала, активного только у пользователя B, не должен попадать в выдачу пользователя A'
+  );
+
+  closeDb();
+});
