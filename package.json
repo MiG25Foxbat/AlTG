@@ -9,7 +9,7 @@
     "legacy-bot": "ts-node src/index.ts",
     "build": "tsc",
     "generate-session": "ts-node src/generateSession.ts",
-    "test": "node --require ts-node/register --test src/tests/keywordFilter.test.ts src/tests/time.test.ts src/tests/windowMessages.test.ts src/tests/api.test.ts src/tests/crypto.test.ts src/tests/database.test.ts src/tests/accounts.test.ts"
+    "test": "node --require ts-node/register --test src/tests/keywordFilter.test.ts src/tests/time.test.ts src/tests/windowMessages.test.ts src/tests/api.test.ts src/tests/crypto.test.ts src/tests/database.test.ts src/tests/accounts.test.ts src/tests/channelsRepo.test.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
