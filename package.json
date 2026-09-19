@@ -9,9 +9,10 @@
     "legacy-bot": "ts-node src/index.ts",
     "build": "tsc",
     "generate-session": "ts-node src/generateSession.ts",
-    "test": "node --require ts-node/register --test src/tests/keywordFilter.test.ts src/tests/time.test.ts src/tests/windowMessages.test.ts src/tests/api.test.ts src/tests/crypto.test.ts"
+    "test": "node --require ts-node/register --test src/tests/keywordFilter.test.ts src/tests/time.test.ts src/tests/windowMessages.test.ts src/tests/api.test.ts src/tests/crypto.test.ts src/tests/database.test.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "dotenv": "^16.3.1",
     "express": "^5.2.1",
     "open": "^11.0.3",
