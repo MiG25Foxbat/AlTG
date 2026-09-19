@@ -40,7 +40,7 @@ class FakeUserBot implements IUserBotReader {
 
 async function startTestServer() {
   const fakeUserBot = new FakeUserBot();
-  const app = createApp(fakeUserBot);
+  const app = await createApp(fakeUserBot);
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   const port = (server.address() as any).port;

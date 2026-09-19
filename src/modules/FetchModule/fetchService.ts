@@ -33,15 +33,16 @@ function describeTelegramError(error: any): string {
  */
 export async function fetchRecentPosts(
   userBot: IUserBotReader,
+  userId: number,
   cutoffUnixSeconds: number
 ): Promise<ChannelFetchResult[]> {
-  const channels = listActiveChannelUsernames();
+  const channels = await listActiveChannelUsernames(userId);
   const results: ChannelFetchResult[] = [];
 
   for (const channel of channels) {
     try {
       const messages = await userBot.getMessagesInWindow(channel, cutoffUnixSeconds);
-      const newCount = insertPosts(
+      const newCount = await insertPosts(
         messages.map((m) => ({
           channelUsername: channel,
           messageId: m.id,
