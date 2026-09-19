@@ -17,47 +17,50 @@ export interface NewPost {
 }
 
 /**
- * Вставляет посты пачкой. Дубликаты (тот же канал + message_id) тихо
- * пропускаются благодаря UNIQUE-ограничению — это и есть дедуп при
- * повторном опросе одного и того же окна времени.
- * Возвращает, сколько строк реально добавилось.
+ * Вставляет посты пачкой в общий кэш public_posts (без userId — текст
+ * одного и того же публичного поста одинаков для всех пользователей,
+ * см. docs/tech-stack-final.md, раздел 5.3). Дубликаты (тот же канал +
+ * message_id) тихо пропускаются благодаря UNIQUE-ограничению. batch()
+ * оборачивает вставку в одну транзакцию сам — ручной BEGIN/COMMIT/
+ * ROLLBACK, нужный для node:sqlite, здесь не требуется.
  */
-export function insertPosts(posts: NewPost[]): number {
+export async function insertPosts(posts: NewPost[]): Promise<number> {
   if (posts.length === 0) return 0;
-  const db = getDb();
-  const stmt = db.prepare(
-    `INSERT OR IGNORE INTO posts (channel_username, message_id, text, posted_at, fetched_at)
-     VALUES (@channelUsername, @messageId, @text, @postedAt, @fetchedAt)`
-  );
+  const db = await getDb();
   const fetchedAt = Math.floor(Date.now() / 1000);
 
-  // node:sqlite не даёт готового db.transaction(fn) как better-sqlite3 —
-  // оборачиваем вручную, чтобы вставка пачки постов была одной транзакцией
-  // (быстрее и атомарно: либо весь фетч канала сохранился, либо ни один пост).
-  let inserted = 0;
-  db.exec('BEGIN');
-  try {
-    for (const row of posts) {
-      const result = stmt.run({ ...row, fetchedAt });
-      inserted += Number(result.changes);
-    }
-    db.exec('COMMIT');
-  } catch (error) {
-    db.exec('ROLLBACK');
-    throw error;
-  }
-  return inserted;
+  const results = await db.batch(
+    posts.map((post) => ({
+      sql: `INSERT OR IGNORE INTO public_posts (channel_username, message_id, text, posted_at, fetched_at)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [post.channelUsername, post.messageId, post.text, post.postedAt, fetchedAt],
+    })),
+    'write'
+  );
+  return results.reduce((sum, r) => sum + r.rowsAffected, 0);
 }
 
-/** Посты из активных каналов не старше cutoff (unix-секунды), самые новые первыми. */
-export function getPostsSince(cutoffUnixSeconds: number, limit: number): PostRow[] {
-  return getDb()
-    .prepare(
-      `SELECT posts.* FROM posts
-       JOIN channels ON channels.username = posts.channel_username
-       WHERE channels.is_active = 1 AND posts.posted_at >= ?
-       ORDER BY posts.posted_at DESC
-       LIMIT ?`
-    )
-    .all(cutoffUnixSeconds, limit) as unknown as PostRow[];
+/**
+ * Посты не старше cutoff (unix-секунды) из каналов, которые у ЭТОГО
+ * пользователя активны — фильтр по активности теперь на user_channels
+ * (per-user), не на public_posts (общий, без понятия "активен").
+ */
+export async function getPostsSince(
+  userId: number,
+  cutoffUnixSeconds: number,
+  limit: number
+): Promise<PostRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT public_posts.* FROM public_posts
+          JOIN user_channels
+            ON user_channels.channel_identifier = public_posts.channel_username
+          WHERE user_channels.user_id = ?
+            AND user_channels.is_active = 1
+            AND public_posts.posted_at >= ?
+          ORDER BY public_posts.posted_at DESC
+          LIMIT ?`,
+    args: [userId, cutoffUnixSeconds, limit],
+  });
+  return result.rows as unknown as PostRow[];
 }
