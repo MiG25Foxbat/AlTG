@@ -4,7 +4,9 @@
 выбранный период, фильтрует их по свободной теме, которую вводит
 пользователь, и присылает ИИ-саммари вместо того, чтобы читать каналы
 руками. Управление — через локальный HTML-интерфейс (`public/`), без
-Telegram Mini App (это в планах, не реализовано).
+Telegram Mini App (это в планах, не реализовано). С регистрацией по
+логину/паролю: каждый веб-аккаунт хранит свой список каналов, Telegram-
+подключение при этом одно общее (см. "Аутентификация" ниже).
 
 Полный бизнес-контекст, целевая (будущая) архитектура и история решений —
 в `docs/project-context.md`. Финальный принятый техстек и подробная
@@ -67,7 +69,7 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 44 теста
+npm test             # node:test, 60 тестов
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register
@@ -86,7 +88,8 @@ src/
     database.ts             # getDb() — singleton @libsql/client, новая схема
     channelsRepo.ts          # CRUD user_channels + нормализация username
     postsRepo.ts               # вставка/выборка public_posts
-    usersRepo.ts                 # getOrCreateSoleUser() — мост без экрана логина
+    usersRepo.ts                 # getOrCreateSoleUser() (системный юзер под Telegram) +
+                                  # register/find/get для веб-логина по паролю
     telegramAccountsRepo.ts        # CRUD telegram_accounts, шифрование на границе
     bootstrap.ts                     # ensureDefaultUser() + перенос старых channels/posts
   modules/
@@ -99,16 +102,47 @@ src/
     AiModule/
       geminiClient.ts        # единственное место с HTTP-вызовами к Gemini
       analyzeService.ts       # вторая ступень: релевантность + саммари
-  utils/time.ts            # парсинг пресетов времени (5м…10ч) в unix-диапазоны
+  utils/time.ts            # парсинг пресетов времени (5м…трое суток) в unix-диапазоны
+  utils/crypto.ts          # AES-256-GCM (session_string/phone) + scrypt-хеш паролей
+  utils/session.ts         # подписанная HTTP-only кука веб-сессии, разбор Cookie-заголовка
   tests/                  # keywordFilter, time, windowMessages, api, crypto,
                           # database, accounts, channelsRepo, postsRepo,
-                          # bootstrap — 44 теста
+                          # bootstrap — 60 тестов
 public/
   index.html, style.css, app.js   # вкладки: каналы / поиск-по-теме / результаты
 docs/
   project-context.md      # бизнес-контекст, целевая архитектура, история
   tech-stack-review.md    # ревизия стороннего техстека
 ```
+
+## Аутентификация
+
+Веб-логин (username/password) — это отдельный слой поверх уже существующей
+многопользовательской схемы, не переделка Telegram-интеграции:
+
+- **Один общий Telegram-бот** (`SESSION_STRING` из `.env`, как и раньше) читает
+  публичные каналы; он не привязан персонально к каждому веб-пользователю.
+- **Каждый веб-аккаунт** (таблица `users`, колонки `username`/`password_hash`,
+  добавлены поверх исходной схемы из `docs/tech-stack-final.md`) хранит свой
+  собственный список каналов (`user_channels`) — независимо от других аккаунтов.
+- Пароли — `scrypt` (`utils/crypto.ts`, `hashPassword`/`verifyPassword`),
+  не bcrypt/argon2: встроено в `node:crypto`, ставить нечего.
+- Сессия — подписанный HMAC-токен в HTTP-only куке (`utils/session.ts`),
+  не JWT-библиотека и не `cookie-parser`: то и другое — несколько строк на
+  голом `node:crypto`/разборе заголовка `Cookie`. Ключ для подписи — не
+  отдельный секрет, а производный от уже существующего
+  `SESSION_ENCRYPTION_KEY` (`deriveKey('web-session')` в `crypto.ts`) с
+  разделением по назначению через HMAC, чтобы не заводить второй секрет
+  в `.env` ради этого.
+- **Первая регистрация "забирает" системного пользователя.** Если на момент
+  регистрации в `users` уже есть строка без `username` (тот самый системный
+  юзер, к которому `bootstrap.ts` привязал Telegram-аккаунт, и под которым,
+  возможно, уже сохранены каналы из однооператорского режима) — именно
+  первый зарегистрировавшийся получает эту строку и её данные, а не пустой
+  аккаунт с нуля (`registerUser()` в `usersRepo.ts`). Все следующие
+  регистрации такую строку уже не находят и создают новую с нуля.
+- Роуты `/api/register`, `/api/login`, `/api/logout`, `/api/me` — публичные;
+  `/api/channels*` и `/api/analyze` — за `requireAuth` в `app.ts`.
 
 ## Правила безопасности с credentials — соблюдать всегда
 

@@ -62,7 +62,9 @@ async function initDb(): Promise<Client> {
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at     INTEGER NOT NULL,
         status         TEXT NOT NULL DEFAULT 'active',
-        last_active_at INTEGER
+        last_active_at INTEGER,
+        username       TEXT,
+        password_hash  TEXT
       )`,
       `CREATE TABLE IF NOT EXISTS telegram_accounts (
         id                        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,8 +127,33 @@ async function initDb(): Promise<Client> {
     'write'
   );
 
+  await ensureUsersAuthColumns(db);
+
   logger.info(`БД готова (libSQL): ${process.env.TURSO_DATABASE_URL ? 'Turso (remote)' : url}`);
   return db;
+}
+
+/**
+ * `CREATE TABLE IF NOT EXISTS` не добавляет колонки в уже существующую
+ * таблицу — на инстансах, где `users` создана до появления логина,
+ * `username`/`password_hash` нужно добавить отдельно через ALTER TABLE.
+ * Идемпотентно: проверяет `PRAGMA table_info`, добавляет только то, чего
+ * не хватает. UNIQUE-индекс на username безопасен с множеством NULL —
+ * SQLite/libSQL считает каждый NULL уникальным сам по себе.
+ */
+async function ensureUsersAuthColumns(db: Client): Promise<void> {
+  const info = await db.execute('PRAGMA table_info(users)');
+  const existingColumns = new Set(
+    (info.rows as unknown as { name: string }[]).map((row) => row.name)
+  );
+
+  if (!existingColumns.has('username')) {
+    await db.execute('ALTER TABLE users ADD COLUMN username TEXT');
+  }
+  if (!existingColumns.has('password_hash')) {
+    await db.execute('ALTER TABLE users ADD COLUMN password_hash TEXT');
+  }
+  await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
 }
 
 export function closeDb() {

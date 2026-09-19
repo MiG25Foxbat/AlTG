@@ -7,10 +7,38 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="app">
+  <!-- ===== Экран входа/регистрации — показывается до проверки /api/me ===== -->
+  <section id="authScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <h1>Telegram-алерты</h1>
+      <p class="app__subtitle">Поиск и суммаризация постов из открытых каналов</p>
+
+      <div class="field">
+        <label class="field__label" for="authUsername">Логин</label>
+        <input id="authUsername" class="text-input" type="text" autocomplete="username" maxlength="32" />
+      </div>
+      <div class="field">
+        <label class="field__label" for="authPassword">Пароль</label>
+        <input id="authPassword" class="text-input" type="password" autocomplete="current-password" />
+      </div>
+
+      <div id="authError" class="field__error" hidden></div>
+
+      <button id="authSubmitBtn" class="btn btn--primary btn--block">Войти</button>
+      <button id="authToggleBtn" class="btn btn--link btn--block" type="button">
+        Нет аккаунта? Зарегистрироваться
+      </button>
+    </div>
+  </section>
+
+  <div class="app" hidden>
     <header class="app__header">
       <h1>Telegram-алерты</h1>
       <p class="app__subtitle">Поиск и суммаризация постов из открытых каналов</p>
+      <div class="app__account">
+        <span id="accountUsername" class="app__account-name"></span>
+        <button id="logoutBtn" class="btn btn--link" type="button">Выйти</button>
+      </div>
     </header>
 
     <nav class="tabs" role="tablist">

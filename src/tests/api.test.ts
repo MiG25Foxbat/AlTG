@@ -5,7 +5,10 @@ import assert from 'node:assert/strict';
 // живого подключения к Telegram или ключа Gemini. database.ts читает
 // DB_PATH лениво (внутри getDb()), поэтому достаточно выставить его
 // до первого фактического обращения к базе — не обязательно до импортов.
+import { randomBytes } from 'node:crypto';
+
 process.env.DB_PATH = ':memory:';
+process.env.SESSION_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 delete process.env.GEMINI_API_KEY;
 
 import { createApp } from '../app';
@@ -51,15 +54,50 @@ async function startTestServer() {
 test('HTTP API: полный сценарий работы с каналами и анализом', async (t) => {
   const { server, baseUrl, fakeUserBot } = await startTestServer();
 
+  // Все защищённые роуты теперь требуют сессионную куку — храним её здесь
+  // и прокидываем в каждый запрос вручную (это голый fetch в тесте, не
+  // браузер, который бы делал это сам).
+  let sessionCookie = '';
+
   const api = async (pathname: string, init?: RequestInit) => {
     const res = await fetch(`${baseUrl}${pathname}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(sessionCookie ? { Cookie: sessionCookie } : {}),
+      },
       ...init,
     });
+    const setCookie = res.headers.get('set-cookie');
+    if (setCookie) sessionCookie = setCookie.split(';')[0];
     const text = await res.text();
     const body = text ? JSON.parse(text) : null;
     return { status: res.status, body };
   };
+
+  await t.test('без входа /api/channels отдаёт 401', async () => {
+    const { status, body } = await api('/api/channels');
+    assert.equal(status, 401);
+    assert.match(body.error, /войти/);
+  });
+
+  await t.test('регистрация создаёт аккаунт и логинит (куку выставляет сразу)', async () => {
+    const { status, body } = await api('/api/register', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'test_user', password: 'correct horse battery' }),
+    });
+    assert.equal(status, 201);
+    assert.equal(body.username, 'test_user');
+    assert.ok(sessionCookie, 'ожидали Set-Cookie в ответе регистрации');
+  });
+
+  await t.test('повторная регистрация того же логина — конфликт', async () => {
+    const { status, body } = await api('/api/register', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'test_user', password: 'another password' }),
+    });
+    assert.equal(status, 409);
+    assert.match(body.error, /занят/);
+  });
 
   await t.test('список каналов изначально пуст', async () => {
     const { status, body } = await api('/api/channels');
@@ -67,13 +105,13 @@ test('HTTP API: полный сценарий работы с каналами �
     assert.deepEqual(body, []);
   });
 
-  await t.test('доступно 8 пресетов периода', async () => {
+  await t.test('доступно 10 пресетов периода (включая сутки и трое суток)', async () => {
     const { status, body } = await api('/api/time-windows');
     assert.equal(status, 200);
-    assert.equal(body.length, 8);
+    assert.equal(body.length, 10);
     assert.deepEqual(
       body.map((o: any) => o.minutes),
-      [5, 15, 30, 60, 180, 300, 420, 600]
+      [5, 15, 30, 60, 180, 300, 420, 600, 1440, 4320]
     );
   });
 
@@ -162,6 +200,36 @@ test('HTTP API: полный сценарий работы с каналами �
   await t.test('удаление уже не существующего канала — 404', async () => {
     const { status } = await api('/api/channels/testchannel', { method: 'DELETE' });
     assert.equal(status, 404);
+  });
+
+  await t.test('выход стирает сессию — защищённый роут снова 401', async () => {
+    const logout = await api('/api/logout', { method: 'POST' });
+    assert.equal(logout.status, 204);
+    sessionCookie = ''; // clearCookie в ответе браузер бы применил сам — тут дублируем вручную
+    const { status } = await api('/api/channels');
+    assert.equal(status, 401);
+  });
+
+  await t.test('логин с верным паролем восстанавливает доступ', async () => {
+    const login = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'test_user', password: 'correct horse battery' }),
+    });
+    assert.equal(login.status, 200);
+    const { status } = await api('/api/channels');
+    assert.equal(status, 200);
+  });
+
+  await t.test('логин с неверным паролем — 401', async () => {
+    const savedCookie = sessionCookie;
+    sessionCookie = '';
+    const { status, body } = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'test_user', password: 'wrong password' }),
+    });
+    assert.equal(status, 401);
+    assert.match(body.error, /Неверный/);
+    sessionCookie = savedCookie;
   });
 
   server.close();

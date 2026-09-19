@@ -7,6 +7,7 @@ const state = {
   selectedWindowMinutes: null,
   channels: [],
   searching: false,
+  authMode: 'login', // 'login' | 'register' — один и тот же экран/форма на оба режима
 };
 
 // ---------- маленький DOM-хелпер ----------
@@ -39,10 +40,72 @@ async function api(path, options) {
   }
   if (!res.ok) {
     const message = (data && data.error) || `Ошибка запроса (${res.status})`;
+    if (res.status === 401) showAuthScreen(); // сессия истекла/не залогинен — вернуть на вход
     throw new Error(message);
   }
   return data;
 }
+
+// ---------- вход/регистрация ----------
+
+function showAuthScreen() {
+  document.getElementById('authScreen').hidden = false;
+  document.querySelector('.app').hidden = true;
+}
+
+function showApp(username) {
+  document.getElementById('authScreen').hidden = true;
+  document.querySelector('.app').hidden = false;
+  document.getElementById('accountUsername').textContent = username;
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  document.getElementById('authSubmitBtn').textContent = mode === 'login' ? 'Войти' : 'Зарегистрироваться';
+  document.getElementById('authToggleBtn').textContent =
+    mode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти';
+  document.getElementById('authError').hidden = true;
+}
+
+document.getElementById('authToggleBtn').addEventListener('click', () => {
+  setAuthMode(state.authMode === 'login' ? 'register' : 'login');
+});
+
+async function submitAuth() {
+  const username = document.getElementById('authUsername').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const errorEl = document.getElementById('authError');
+  const btn = document.getElementById('authSubmitBtn');
+  errorEl.hidden = true;
+
+  btn.disabled = true;
+  try {
+    const user = await api(`/api/${state.authMode === 'login' ? 'login' : 'register'}`, {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    document.getElementById('authPassword').value = '';
+    showApp(user.username);
+    await Promise.all([loadWindowOptions(), loadChannels()]);
+  } catch (error) {
+    errorEl.textContent = error.message;
+    errorEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('authSubmitBtn').addEventListener('click', submitAuth);
+document.getElementById('authPassword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAuth();
+});
+
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await api('/api/logout', { method: 'POST' });
+  document.getElementById('authUsername').value = '';
+  document.getElementById('authPassword').value = '';
+  showAuthScreen();
+});
 
 // ---------- вкладки ----------
 
@@ -332,11 +395,18 @@ function truncate(text, max) {
 // ---------- старт ----------
 
 (async function init() {
+  setAuthMode('login');
   try {
+    const res = await fetch('/api/me');
+    if (!res.ok) {
+      showAuthScreen();
+      return;
+    }
+    const user = await res.json();
+    showApp(user.username);
     await Promise.all([loadWindowOptions(), loadChannels()]);
   } catch (error) {
-    const banner = document.getElementById('errorBanner');
-    banner.textContent = `Не удалось загрузить страницу: ${error.message}`;
-    banner.hidden = false;
+    console.error('Не удалось загрузить страницу:', error);
+    showAuthScreen();
   }
 })();

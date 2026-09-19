@@ -1,7 +1,12 @@
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac, scrypt, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+
+const scryptAsync = promisify(scrypt);
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // рекомендованная длина IV для GCM
+const PASSWORD_SALT_LENGTH = 16;
+const PASSWORD_KEY_LENGTH = 64;
 
 /**
  * Шифрование чувствительных полей (session_string, phone_number) перед
@@ -51,4 +56,37 @@ export function decrypt(payload: string): string {
     decipher.final(),
   ]);
   return plaintext.toString('utf8');
+}
+
+/**
+ * Ключ, производный от SESSION_ENCRYPTION_KEY для конкретной цели (HMAC
+ * с уникальным `purpose` вместо самого секрета) — так подпись веб-сессии
+ * (см. utils/session.ts) не использует напрямую ключ, которым шифруются
+ * session_string/phone_number: компрометация одного назначения не даёт
+ * материала для другого, а заводить второй обязательный секрет в .env
+ * ради этого не нужно.
+ */
+export function deriveKey(purpose: string): Buffer {
+  return createHmac('sha256', loadKey()).update(purpose).digest();
+}
+
+/**
+ * Хеширует пароль для хранения в БД: scrypt (встроен в node:crypto,
+ * ничего дополнительного ставить не нужно) со случайной солью на пароль.
+ * Формат — "salt:hash" (обе части в base64).
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(PASSWORD_SALT_LENGTH);
+  const derived = (await scryptAsync(password, salt, PASSWORD_KEY_LENGTH)) as Buffer;
+  return `${salt.toString('base64')}:${derived.toString('base64')}`;
+}
+
+/** Сверяет пароль с хешем из hashPassword() — таймингово-безопасное сравнение. */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  const [saltB64, expectedB64] = hash.split(':');
+  if (!saltB64 || !expectedB64) return false;
+  const salt = Buffer.from(saltB64, 'base64');
+  const expected = Buffer.from(expectedB64, 'base64');
+  const actual = (await scryptAsync(password, salt, expected.length)) as Buffer;
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

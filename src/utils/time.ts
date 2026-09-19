@@ -1,6 +1,5 @@
 /**
- * Пресеты периода "за какое время получить посты" — ровно те восемь
- * значений, которые заданы в требованиях к интерфейсу.
+ * Пресеты периода "за какое время получить посты".
  */
 export interface TimeWindowOption {
   /** Значение в минутах — используется как id и как параметр запроса */
@@ -18,6 +17,8 @@ export const TIME_WINDOW_OPTIONS: TimeWindowOption[] = [
   { minutes: 300, label: '5 ч' },
   { minutes: 420, label: '7 ч' },
   { minutes: 600, label: '10 ч' },
+  { minutes: 1440, label: 'Сутки' },
+  { minutes: 4320, label: 'Трое суток' },
 ];
 
 const ALLOWED_MINUTES = new Set(TIME_WINDOW_OPTIONS.map((o) => o.minutes));

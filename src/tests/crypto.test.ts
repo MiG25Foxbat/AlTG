@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 
 process.env.SESSION_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
-import { encrypt, decrypt } from '../utils/crypto';
+import { encrypt, decrypt, hashPassword, verifyPassword, deriveKey } from '../utils/crypto';
 
 test('encrypt/decrypt: round-trip возвращает исходную строку', () => {
   const original = '1BQANOTEuMTA4LjU2LjE7NTk3MDpFQzY4QzMzMD_example_session_string';
@@ -40,4 +40,23 @@ test('encrypt: без SESSION_ENCRYPTION_KEY бросает понятную о�
   delete process.env.SESSION_ENCRYPTION_KEY;
   assert.throws(() => encrypt('x'), /SESSION_ENCRYPTION_KEY/);
   process.env.SESSION_ENCRYPTION_KEY = saved;
+});
+
+test('hashPassword/verifyPassword: верный пароль проходит, неверный — нет', async () => {
+  const hash = await hashPassword('correct horse battery staple');
+  assert.equal(await verifyPassword('correct horse battery staple', hash), true);
+  assert.equal(await verifyPassword('wrong password', hash), false);
+});
+
+test('hashPassword: одинаковый пароль даёт разные хеши (случайная соль)', async () => {
+  const a = await hashPassword('same-password');
+  const b = await hashPassword('same-password');
+  assert.notEqual(a, b);
+});
+
+test('deriveKey: разные назначения дают разные ключи из одного секрета', () => {
+  const a = deriveKey('purpose-a');
+  const b = deriveKey('purpose-b');
+  assert.equal(a.length, 32);
+  assert.notEqual(a.toString('hex'), b.toString('hex'));
 });

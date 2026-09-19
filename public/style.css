@@ -169,11 +169,66 @@ body {
   border: 1px solid var(--border);
 }
 
+.btn--link {
+  background: transparent;
+  color: var(--accent);
+  padding: 8px 0;
+  font-size: 13px;
+  text-align: center;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 16px;
+}
+
+/* [hidden] и класс .auth-screen имеют одинаковую специфичность — без этого
+   правила display: flex выше перебивает нативное скрытие по атрибуту. */
+.auth-screen[hidden] { display: none; }
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+}
+
+.auth-card h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+  text-align: center;
+}
+
+.auth-card .app__subtitle {
+  text-align: center;
+}
+
+.app__account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -8px 0 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.app__account-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
 .hint {
   font-size: 13px;
   color: var(--text-muted);
   margin: -8px 0 14px;
 }
+
+.loading[hidden] { display: none; } /* см. комментарий у .auth-screen[hidden] */
 
 .loading {
   display: flex;
