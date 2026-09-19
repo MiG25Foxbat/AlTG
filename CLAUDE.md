@@ -149,6 +149,15 @@ docs/
   `"telegram"` → `"teleproto"` в большинстве мест). Не откладывать эту
   миграцию как "когда-нибудь" — зависимость `telegram` в `package.json`
   сейчас указывает на неподдерживаемую библиотеку.
+- **teleproto's bundled `.d.ts` has type definition compatibility issues
+  with TypeScript 5.2.2** — Buffer is used as generic (TS2315 errors in 45+
+  places), missing type aliases (InlineKeyboard, ReplyKeyboard in define.d.ts).
+  These errors surface during module resolution (not fixable with
+  `@ts-expect-error` on import lines), don't affect runtime behavior, and all
+  tests pass. Solution: `"skipLibCheck": true` in `tsconfig.json` suppresses
+  .d.ts validation for node_modules. Keep this flag — it's the standard
+  workaround for library type definition issues. Don't remove without
+  re-checking teleproto's typings first.
 
 ## Тестовая стратегия проекта
 
