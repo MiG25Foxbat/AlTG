@@ -13,10 +13,12 @@
 
 ## Что нужно для запуска
 
-1. Node.js 22.13+ или 23.4+ (проверялось на 22 и 24). База — встроенный `node:sqlite`,
-   отдельной установки/сборки СУБД не требует: никаких Visual Studio Build Tools
-   на Windows, в отличие от `better-sqlite3`, с которого начинался этот файл
-   и который на чистой Windows-машине без C++-тулчейна падает на `npm install`.
+1. Node.js 22.13+ или 23.4+ (проверялось на 22 и 24). База — Turso/libSQL
+   через `@libsql/client`: для разработки достаточно локального файла
+   (`DB_PATH`, без сети и без затрат), для прода — переменные
+   `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN`. Бинарники прекомпилированы под
+   все платформы (включая Windows) — как и раньше, без Visual Studio
+   Build Tools.
 2. Аккаунт Telegram и API-креды с [my.telegram.org](https://my.telegram.org)
    (API_ID, API_HASH) — как и раньше.
 3. Строка сессии (`SESSION_STRING`) — та же, что уже использовалась в проекте
@@ -29,7 +31,7 @@
 ```bash
 npm install
 cp .env.example .env
-# открыть .env и заполнить: API_ID, API_HASH, SESSION_STRING, GEMINI_API_KEY
+# открыть .env и заполнить: API_ID, API_HASH, SESSION_STRING, GEMINI_API_KEY, SESSION_ENCRYPTION_KEY
 
 # если SESSION_STRING ещё нет — сгенерировать:
 npm run generate-session
@@ -120,9 +122,12 @@ src/
   server.ts                       — запуск: поднимает UserBot, вызывает createApp, слушает порт
   index.ts                        — СТАРЫЙ сценарий (автореакции/автокомментарии), не используется по умолчанию
   db/
-    database.ts                   — подключение к SQLite, схема
-    channelsRepo.ts                — CRUD каналов + нормализация username
-    postsRepo.ts                   — вставка/выборка постов
+    database.ts                   — подключение к Turso/libSQL, схема
+    channelsRepo.ts                — CRUD user_channels + нормализация username
+    postsRepo.ts                   — вставка/выборка public_posts
+    usersRepo.ts                   — единственный пользователь-мост без логина
+    telegramAccountsRepo.ts        — CRUD telegram_accounts, шифрование
+    bootstrap.ts                   — привязка аккаунта + перенос старых данных
   modules/
     UserBotModule/
       UserBot.ts                   — обёртка над GramJS; реакции/комментарии закомментированы
