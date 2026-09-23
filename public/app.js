@@ -87,6 +87,7 @@ async function submitAuth() {
     document.getElementById('authPassword').value = '';
     showApp(user.username);
     await Promise.all([loadWindowOptions(), loadChannels()]);
+    await loadTelegramAccountStatus();
   } catch (error) {
     errorEl.textContent = error.message;
     errorEl.hidden = false;
@@ -270,6 +271,114 @@ async function addChannel() {
   }
 }
 
+// ---------- личный Telegram-аккаунт (приватные каналы) ----------
+
+function tgShowStep(step) {
+  document.getElementById('tgStepPhone').hidden = step !== 'phone';
+  document.getElementById('tgStepCode').hidden = step !== 'code';
+  document.getElementById('tgStepPassword').hidden = step !== 'password';
+  document.getElementById('tgError').hidden = true;
+}
+
+async function loadTelegramAccountStatus() {
+  const { connected } = await api('/api/telegram/status');
+  document.getElementById('tgNotConnected').hidden = connected;
+  document.getElementById('tgConnected').hidden = !connected;
+  if (connected) {
+    await loadPrivateDialogs();
+  } else {
+    tgShowStep('phone');
+  }
+}
+
+function tgError(message) {
+  const el = document.getElementById('tgError');
+  el.textContent = message;
+  el.hidden = false;
+}
+
+document.getElementById('tgSendCodeBtn').addEventListener('click', async () => {
+  const phone = document.getElementById('tgPhone').value.trim();
+  try {
+    await api('/api/telegram/connect/start', { method: 'POST', body: JSON.stringify({ phone }) });
+    tgShowStep('code');
+  } catch (error) {
+    tgError(error.message);
+  }
+});
+
+async function tgSubmitCode() {
+  const code = document.getElementById('tgCode').value.trim();
+  try {
+    const result = await api('/api/telegram/connect/code', { method: 'POST', body: JSON.stringify({ code }) });
+    if (result.status === 'needs_password') {
+      tgShowStep('password');
+    } else {
+      await loadTelegramAccountStatus();
+    }
+  } catch (error) {
+    tgError(error.message);
+  }
+}
+document.getElementById('tgConfirmCodeBtn').addEventListener('click', tgSubmitCode);
+
+async function tgSubmitPassword() {
+  const password = document.getElementById('tgPassword').value;
+  try {
+    await api('/api/telegram/connect/password', { method: 'POST', body: JSON.stringify({ password }) });
+    await loadTelegramAccountStatus();
+  } catch (error) {
+    tgError(error.message);
+  }
+}
+document.getElementById('tgConfirmPasswordBtn').addEventListener('click', tgSubmitPassword);
+
+async function tgCancel() {
+  await api('/api/telegram/connect/cancel', { method: 'POST' });
+  document.getElementById('tgPhone').value = '';
+  document.getElementById('tgCode').value = '';
+  document.getElementById('tgPassword').value = '';
+  tgShowStep('phone');
+}
+document.getElementById('tgCancelBtn').addEventListener('click', tgCancel);
+document.getElementById('tgCancelBtn2').addEventListener('click', tgCancel);
+
+document.getElementById('tgDisconnectBtn').addEventListener('click', async () => {
+  await api('/api/telegram/disconnect', { method: 'POST' });
+  await loadTelegramAccountStatus();
+});
+
+async function loadPrivateDialogs() {
+  const dialogs = await api('/api/telegram/private-dialogs');
+  const list = document.getElementById('privateDialogsList');
+  const empty = document.getElementById('privateDialogsEmpty');
+  const alreadyAdded = new Set(state.channels.map((c) => c.username));
+  const available = dialogs.filter((d) => !alreadyAdded.has(d.id));
+
+  list.innerHTML = '';
+  empty.hidden = available.length > 0;
+  for (const dialog of available) {
+    const addBtn = el('button', { class: 'btn btn--primary', type: 'button' }, 'Добавить');
+    addBtn.addEventListener('click', async () => {
+      addBtn.disabled = true;
+      try {
+        await api('/api/channels/private', { method: 'POST', body: JSON.stringify({ id: dialog.id, title: dialog.title }) });
+        await loadChannels();
+        await loadPrivateDialogs();
+      } catch (error) {
+        alert(error.message);
+        addBtn.disabled = false;
+      }
+    });
+    list.appendChild(
+      el('li', { class: 'channel-row' }, [
+        el('div', { class: 'channel-row__info' }, [el('div', { class: 'channel-row__title', text: dialog.title })]),
+        el('div', { class: 'channel-row__actions' }, [addBtn]),
+      ])
+    );
+  }
+}
+
 function updateSearchAvailability() {
   const hasActive = state.channels.some((c) => c.isActive);
   const hint = document.getElementById('searchHint');
@@ -405,6 +514,7 @@ function truncate(text, max) {
     const user = await res.json();
     showApp(user.username);
     await Promise.all([loadWindowOptions(), loadChannels()]);
+    await loadTelegramAccountStatus();
   } catch (error) {
     console.error('Не удалось загрузить страницу:', error);
     showAuthScreen();

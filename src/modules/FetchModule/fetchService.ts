@@ -1,7 +1,13 @@
 import { IUserBotReader } from '../UserBotModule/IUserBotReader';
-import { listActiveChannelUsernames } from '../../db/channelsRepo';
+import { collectMessagesInWindow } from '../UserBotModule/windowPagination';
+import { withPersonalClient } from '../UserBotModule/personalAccount';
+import { listActiveChannelUsernames, listActivePrivateChannelIds } from '../../db/channelsRepo';
 import { insertPosts } from '../../db/postsRepo';
+import { insertPrivatePosts } from '../../db/privatePostsRepo';
 import { logger } from '../../utils/logger';
+
+const PRIVATE_PAGE_SIZE = 100;
+const MAX_PRIVATE_MESSAGES = 500; // тот же лимит, что и для публичных каналов в UserBot.ts
 
 export interface ChannelFetchResult {
   channel: string;
@@ -63,4 +69,49 @@ export async function fetchRecentPosts(
   }
 
   return results;
+}
+
+/**
+ * То же самое для приватных каналов, но через ЛИЧНЫЙ Telegram-клиент
+ * пользователя (только он состоит в этих каналах — общий системный бот
+ * не может их прочитать) и с записью в private_posts, а не в общий кэш.
+ * Если у пользователя не подключён личный аккаунт — тихо возвращает [],
+ * это не ошибка: значит просто нечего опрашивать этим способом.
+ */
+export async function fetchRecentPrivatePosts(
+  userId: number,
+  cutoffUnixSeconds: number
+): Promise<ChannelFetchResult[]> {
+  const channelIds = await listActivePrivateChannelIds(userId);
+  if (channelIds.length === 0) return [];
+
+  const results = await withPersonalClient(userId, async (client) => {
+    const perChannel: ChannelFetchResult[] = [];
+    for (const channelId of channelIds) {
+      try {
+        const messages = await collectMessagesInWindow(
+          async (offsetId) => {
+            const page = await client.getMessages(channelId, {
+              limit: PRIVATE_PAGE_SIZE,
+              offsetId: offsetId || undefined,
+            });
+            return (page as any[]).map((m) => ({ id: m.id, message: m.message, date: m.date }));
+          },
+          cutoffUnixSeconds,
+          MAX_PRIVATE_MESSAGES
+        );
+        const newCount = await insertPrivatePosts(
+          userId,
+          messages.map((m) => ({ channelIdentifier: channelId, messageId: m.id, text: m.text, postedAt: m.date }))
+        );
+        perChannel.push({ channel: channelId, fetchedCount: messages.length, newCount });
+      } catch (error: any) {
+        logger.error(`Ошибка при получении постов из приватного канала ${channelId}:`, error);
+        perChannel.push({ channel: channelId, fetchedCount: 0, newCount: 0, error: describeTelegramError(error) });
+      }
+    }
+    return perChannel;
+  });
+
+  return results ?? [];
 }

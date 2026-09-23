@@ -69,7 +69,7 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 60 тестов
+npm test             # node:test, 63 теста
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register
@@ -92,11 +92,14 @@ src/
                                   # register/find/get для веб-логина по паролю
     telegramAccountsRepo.ts        # CRUD telegram_accounts, шифрование на границе
     bootstrap.ts                     # ensureDefaultUser() + перенос старых channels/posts
+    privatePostsRepo.ts              # вставка/выборка private_posts, скоуп по user_id (не общий кэш)
   modules/
     UserBotModule/
       UserBot.ts            # обёртка над GramJS-клиентом; реакции/комменты закомментированы
       IUserBotReader.ts     # минимальный read-only интерфейс — ради DI в тестах
       windowPagination.ts   # чистая функция постраничного сбора сообщений за окно времени
+      personalAccount.ts    # личный Telegram-аккаунт пользователя: connect-флоу
+                             # (phone → code → 2FA), withPersonalClient(), listPrivateDialogs()
     FetchModule/fetchService.ts     # оркестрация: каналы → UserBot → БД
     FilterModule/keywordFilter.ts   # подстрочный keyword-фильтр (первая ступень)
     AiModule/
@@ -107,7 +110,7 @@ src/
   utils/session.ts         # подписанная HTTP-only кука веб-сессии, разбор Cookie-заголовка
   tests/                  # keywordFilter, time, windowMessages, api, crypto,
                           # database, accounts, channelsRepo, postsRepo,
-                          # bootstrap — 60 тестов
+                          # bootstrap — 63 теста
 public/
   index.html, style.css, app.js   # вкладки: каналы / поиск-по-теме / результаты
 docs/
@@ -143,6 +146,56 @@ docs/
   регистрации такую строку уже не находят и создают новую с нуля.
 - Роуты `/api/register`, `/api/login`, `/api/logout`, `/api/me` — публичные;
   `/api/channels*` и `/api/analyze` — за `requireAuth` в `app.ts`.
+
+## Личный Telegram-аккаунт пользователя и приватные каналы
+
+Каждый веб-пользователь может дополнительно подключить свой личный
+Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), чтобы
+мониторить закрытые каналы/группы, куда общий системный бот доступа не
+имеет — это отдельный, необязательный слой поверх обычного веб-логина,
+не замена ему.
+
+- **Flow:** `POST /api/telegram/connect/start` (`client.sendCode`) →
+  `POST /api/telegram/connect/code` (`Api.auth.SignIn`, может вернуть
+  `needs_password` при включённой 2FA) → `POST /api/telegram/connect/password`
+  (`client.signInWithPassword`). Успешный результат сохраняется через уже
+  существующий `telegramAccountsRepo.upsertAccount()` — та же зашифрованная
+  запись, что и для системного бота, но теперь по-настоящему за каждым
+  реальным пользователем.
+- **Временное состояние флоу** (`phoneCodeHash`, живое MTProto-соединение
+  на время ввода кода/пароля) — только в памяти процесса, `Map<userId, ...>`
+  с TTL 5 минут и автоочисткой раз в минуту (`docs/tech-stack-final.md`,
+  5.5). Никогда не попадает в БД.
+- **Приватные каналы находятся через `client.getDialogs()`**, а не по
+  ссылке-приглашению или названию: `GET /api/telegram/private-dialogs`
+  отдаёт каналы/супергруппы без публичного `@username`, в которых
+  подключённый аккаунт уже состоит — надёжнее, чем парсить произвольные
+  инвайт-ссылки, и не требует отдельной логики "не найден/не участник".
+- **Чтение приватных постов** — через `withPersonalClient()`: расшифровка
+  сессии, разовое подключение, `client.getMessages()`, отключение сразу
+  после — та же дисциплина "взяли на цикл, применили, стёрли", что и для
+  системного бота (5.5 дока). Пишет в `private_posts` (см.
+  `privatePostsRepo.ts`), никогда в общий `public_posts`.
+- **`fetchService.fetchRecentPrivatePosts()`** и обычный
+  `fetchRecentPosts()` (общий бот) запускаются в `analyzeService.ts`
+  параллельно (`Promise.all`), результаты из `public_posts`/`private_posts`
+  объединяются перед фильтром/ИИ — с точки зрения остального пайплайна
+  разницы между публичным и приватным постом больше нет.
+- Отключение аккаунта (`POST /api/telegram/disconnect`) — best-effort
+  `Api.auth.LogOut` на стороне Telegram, затем удаление записи из БД в
+  любом случае (даже если удалённый логаут не удался).
+- В интерфейсе перед подключением показывается явное предупреждение о
+  риске ограничений от Telegram при автоматизации через личный аккаунт
+  (`docs/tech-stack-final.md`, раздел 3) — это требование дока, не просто
+  формальность.
+- **Известная грабля, в которую уже попадали:** жёсткое завершение процесса
+  сервера (`taskkill /F`, `kill -9`) вместо штатной остановки (`Ctrl+C`
+  → `SIGINT`-хендлер в `server.ts`) может не дать MTProto-сессии закрыться
+  корректно — при быстром переподключении той же `SESSION_STRING` Telegram
+  иногда трактует это как конкурентное использование и аннулирует сессию
+  (`AUTH_KEY_DUPLICATED`), после чего `SESSION_STRING` нужно перегенерировать
+  заново (`npm run generate-session`, интерактивно, нужен доступ к телефону).
+  Всегда останавливать сервер штатно.
 
 ## Правила безопасности с credentials — соблюдать всегда
 

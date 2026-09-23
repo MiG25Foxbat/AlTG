@@ -1,6 +1,7 @@
 import { IUserBotReader } from '../UserBotModule/IUserBotReader';
-import { fetchRecentPosts, ChannelFetchResult } from '../FetchModule/fetchService';
-import { getPostsSince, PostRow } from '../../db/postsRepo';
+import { fetchRecentPosts, fetchRecentPrivatePosts, ChannelFetchResult } from '../FetchModule/fetchService';
+import { getPostsSince } from '../../db/postsRepo';
+import { getPrivatePostsSince } from '../../db/privatePostsRepo';
 import { listChannels } from '../../db/channelsRepo';
 import { extractKeywords, keywordPreFilter } from '../FilterModule/keywordFilter';
 import { summarizeWithGemini } from './geminiClient';
@@ -21,6 +22,15 @@ export interface ResultItem {
   gist: string;
 }
 
+/** Общая для public_posts/private_posts форма — дальше по пайплайну (фильтр, ИИ) им всё равно, откуда пост. */
+interface UnifiedPost {
+  channel: string;
+  isPrivate: boolean;
+  messageId: number;
+  text: string;
+  postedAt: number;
+}
+
 export interface AnalyzeResult {
   windowMinutes: number;
   topic: string;
@@ -34,7 +44,14 @@ export interface AnalyzeResult {
   tookMs: number;
 }
 
-function toLink(channel: string, messageId: number): string {
+function toLink(channel: string, messageId: number, isPrivate: boolean): string {
+  if (isPrivate) {
+    // Deep-link на пост в канале без публичного @username — рабочий формат
+    // Telegram (t.me/c/<id>/<msg>) только для тех, кто уже состоит в канале,
+    // как раз наш случай. "-100"-префикс (bot-API стиль ID) отбрасываем.
+    const bareId = channel.replace(/^-100/, '').replace(/^-/, '');
+    return `https://t.me/c/${bareId}/${messageId}`;
+  }
   return `https://t.me/${channel.replace(/^@/, '')}/${messageId}`;
 }
 
@@ -47,17 +64,29 @@ export async function analyzeTopic(
   const startedAt = Date.now();
   const cutoff = windowMinutesToCutoff(windowMinutes);
 
-  const fetchResults: ChannelFetchResult[] = await fetchRecentPosts(userBot, userId, cutoff);
-  const channelErrors = fetchResults
+  const [fetchResults, privateFetchResults]: [ChannelFetchResult[], ChannelFetchResult[]] = await Promise.all([
+    fetchRecentPosts(userBot, userId, cutoff),
+    fetchRecentPrivatePosts(userId, cutoff),
+  ]);
+  const channelErrors = [...fetchResults, ...privateFetchResults]
     .filter((r) => r.error)
     .map((r) => ({ channel: r.channel, error: r.error! }));
 
-  const posts: PostRow[] = await getPostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP);
+  const [publicPosts, privatePosts] = await Promise.all([
+    getPostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP),
+    getPrivatePostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP),
+  ]);
+  const posts: UnifiedPost[] = [
+    ...publicPosts.map((p) => ({ channel: p.channel_username, isPrivate: false, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
+    ...privatePosts.map((p) => ({ channel: p.channel_identifier, isPrivate: true, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
+  ]
+    .sort((a, b) => b.postedAt - a.postedAt)
+    .slice(0, POSTS_FETCHED_FROM_DB_CAP);
 
   const baseResult = {
     windowMinutes,
     topic,
-    channelsChecked: fetchResults.length,
+    channelsChecked: fetchResults.length + privateFetchResults.length,
     channelErrors,
     postsInWindow: posts.length,
   };
@@ -95,13 +124,13 @@ export async function analyzeTopic(
     .map((r) => {
       const post = candidates[r.index];
       return {
-        channel: post.channel_username,
-        channelTitle: channelTitles.get(post.channel_username) ?? null,
-        messageId: post.message_id,
-        postedAtUnix: post.posted_at,
-        postedAtFormatted: formatMoscowTime(post.posted_at),
+        channel: post.channel,
+        channelTitle: channelTitles.get(post.channel) ?? null,
+        messageId: post.messageId,
+        postedAtUnix: post.postedAt,
+        postedAtFormatted: formatMoscowTime(post.postedAt),
         text: post.text,
-        link: toLink(post.channel_username, post.message_id),
+        link: toLink(post.channel, post.messageId, post.isPrivate),
         gist: r.gist,
       };
     })

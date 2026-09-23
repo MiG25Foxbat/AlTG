@@ -112,6 +112,56 @@
       <div id="channelsEmpty" class="empty-state" hidden>
         Пока нет ни одного канала. Добавьте первый выше — пока поддерживаются только открытые каналы.
       </div>
+
+      <!-- ===== Личный Telegram-аккаунт (для приватных каналов) ===== -->
+      <div class="section-divider"></div>
+      <h2 class="section-title">Приватные каналы</h2>
+
+      <div id="tgNotConnected" class="tg-account" hidden>
+        <p class="hint hint--block">
+          Чтобы мониторить закрытые каналы, подключите свой Telegram-аккаунт.
+          Сервис будет читать их от вашего имени — Telegram может временно
+          ограничить аккаунт при подозрении на автоматизацию, риск не нулевой.
+        </p>
+
+        <div id="tgStepPhone">
+          <div class="field">
+            <label class="field__label" for="tgPhone">Номер телефона</label>
+            <input id="tgPhone" class="text-input" type="tel" placeholder="+79991234567" autocomplete="off" />
+          </div>
+          <button id="tgSendCodeBtn" class="btn btn--primary" type="button">Отправить код</button>
+        </div>
+
+        <div id="tgStepCode" hidden>
+          <div class="field">
+            <label class="field__label" for="tgCode">Код из Telegram</label>
+            <input id="tgCode" class="text-input" type="text" inputmode="numeric" autocomplete="off" />
+          </div>
+          <button id="tgConfirmCodeBtn" class="btn btn--primary" type="button">Подтвердить</button>
+          <button id="tgCancelBtn" class="btn btn--link" type="button">Отмена</button>
+        </div>
+
+        <div id="tgStepPassword" hidden>
+          <div class="field">
+            <label class="field__label" for="tgPassword">Пароль двухфакторной аутентификации</label>
+            <input id="tgPassword" class="text-input" type="password" autocomplete="off" />
+          </div>
+          <button id="tgConfirmPasswordBtn" class="btn btn--primary" type="button">Войти</button>
+          <button id="tgCancelBtn2" class="btn btn--link" type="button">Отмена</button>
+        </div>
+
+        <div id="tgError" class="field__error" hidden></div>
+      </div>
+
+      <div id="tgConnected" class="tg-account" hidden>
+        <p class="hint hint--block">Личный Telegram-аккаунт подключён.</p>
+        <button id="tgDisconnectBtn" class="btn btn--danger" type="button">Отключить аккаунт</button>
+
+        <ul id="privateDialogsList" class="channels-list"></ul>
+        <div id="privateDialogsEmpty" class="empty-state" hidden>
+          Нет каналов/групп без публичного имени, куда можно подключиться — либо все уже добавлены.
+        </div>
+      </div>
     </section>
   </div>
 

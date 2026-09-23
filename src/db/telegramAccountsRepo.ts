@@ -73,3 +73,9 @@ export async function getDecryptedAccount(userId: number): Promise<DecryptedAcco
     sessionString: decrypt(row.session_string_encrypted),
   };
 }
+
+/** Отвязывает Telegram-аккаунт от пользователя (для «Отключить» в интерфейсе). */
+export async function deleteAccount(userId: number): Promise<void> {
+  const db = await getDb();
+  await db.execute({ sql: 'DELETE FROM telegram_accounts WHERE user_id = ?', args: [userId] });
+}

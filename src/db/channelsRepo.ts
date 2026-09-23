@@ -50,10 +50,11 @@ export async function listChannels(userId: number): Promise<ChannelDto[]> {
   return (result.rows as unknown as ChannelRow[]).map(toDto);
 }
 
+/** Публичные каналы — читает общий системный бот, см. listActivePrivateChannelIds для приватных. */
 export async function listActiveChannelUsernames(userId: number): Promise<string[]> {
   const db = await getDb();
   const result = await db.execute({
-    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1',
+    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1 AND is_private = 0',
     args: [userId],
   });
   return (result.rows as unknown as { channel_identifier: string }[]).map(
@@ -77,7 +78,8 @@ export async function getChannel(
 export async function upsertChannel(
   userId: number,
   identifier: string,
-  title: string | null
+  title: string | null,
+  isPrivate = false
 ): Promise<ChannelDto> {
   const db = await getDb();
   const existing = await getChannel(userId, identifier);
@@ -88,11 +90,21 @@ export async function upsertChannel(
     });
   } else {
     await db.execute({
-      sql: 'INSERT INTO user_channels (user_id, channel_identifier, channel_title, added_at, is_active) VALUES (?, ?, ?, ?, 1)',
-      args: [userId, identifier, title, Math.floor(Date.now() / 1000)],
+      sql: 'INSERT INTO user_channels (user_id, channel_identifier, channel_title, is_private, added_at, is_active) VALUES (?, ?, ?, ?, ?, 1)',
+      args: [userId, identifier, title, isPrivate ? 1 : 0, Math.floor(Date.now() / 1000)],
     });
   }
   return (await getChannel(userId, identifier))!;
+}
+
+/** Идентификаторы приватных каналов, активных у пользователя — для fetchService. */
+export async function listActivePrivateChannelIds(userId: number): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1 AND is_private = 1',
+    args: [userId],
+  });
+  return (result.rows as unknown as { channel_identifier: string }[]).map((r) => r.channel_identifier);
 }
 
 export async function setChannelActive(

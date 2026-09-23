@@ -8,8 +8,17 @@ import {
   normalizeChannelUsername,
 } from './db/channelsRepo';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
+import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
 import { hashPassword, verifyPassword } from './utils/crypto';
 import { createSessionToken, verifySessionToken, parseCookies, SESSION_COOKIE_NAME } from './utils/session';
+import {
+  startConnect,
+  submitCode,
+  submitPassword,
+  cancelConnect,
+  disconnectAccount,
+  listPrivateDialogs,
+} from './modules/UserBotModule/personalAccount';
 import { analyzeTopic } from './modules/AiModule/analyzeService';
 import { GeminiConfigError, GeminiQuotaError } from './modules/AiModule/geminiClient';
 import { InvalidTimeWindowError, TIME_WINDOW_OPTIONS } from './utils/time';
@@ -176,6 +185,83 @@ export async function createApp(userBot: IUserBotReader) {
       return res.status(404).json({ error: `Канал ${username} не найден` });
     }
     res.status(204).end();
+  });
+
+  // --- Личный Telegram-аккаунт (для чтения приватных каналов пользователя) ---
+  // Риск ограничений от Telegram не нулевой при автоматизации через личный
+  // аккаунт (docs/tech-stack-final.md, раздел 3) — предупреждение об этом
+  // показывается в интерфейсе перед подключением, не только в коде.
+
+  app.get('/api/telegram/status', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json({ connected: await hasTelegramAccount(req.userId!) });
+  });
+
+  app.post('/api/telegram/connect/start', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
+    if (!/^\+?\d{7,15}$/.test(phone)) {
+      return res.status(400).json({ error: 'Введите номер телефона в международном формате, например +79991234567' });
+    }
+    try {
+      res.json(await startConnect(req.userId!, phone));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/telegram/connect/code', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!code) {
+      return res.status(400).json({ error: 'Введите код подтверждения' });
+    }
+    try {
+      res.json(await submitCode(req.userId!, code));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/telegram/connect/password', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!password) {
+      return res.status(400).json({ error: 'Введите пароль двухфакторной аутентификации' });
+    }
+    try {
+      res.json(await submitPassword(req.userId!, password));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/telegram/connect/cancel', requireAuth, (req: AuthedRequest, res: Response) => {
+    cancelConnect(req.userId!);
+    res.status(204).end();
+  });
+
+  app.post('/api/telegram/disconnect', requireAuth, async (req: AuthedRequest, res: Response) => {
+    await disconnectAccount(req.userId!);
+    res.status(204).end();
+  });
+
+  app.get('/api/telegram/private-dialogs', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const dialogs = await listPrivateDialogs(req.userId!);
+    if (!dialogs) {
+      return res.status(409).json({ error: 'Сначала подключите личный Telegram-аккаунт' });
+    }
+    res.json(dialogs);
+  });
+
+  app.post('/api/channels/private', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const id = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : null;
+    if (!id) {
+      return res.status(400).json({ error: 'Не указан канал' });
+    }
+    const existing = (await listChannels(req.userId!)).find((c) => c.username === id);
+    if (existing) {
+      return res.status(409).json({ error: 'Этот канал уже добавлен' });
+    }
+    const channel = await upsertChannel(req.userId!, id, title, true);
+    res.status(201).json(channel);
   });
 
   // --- Настройки для интерфейса (публично — статичный список, не тянет вход) ---
