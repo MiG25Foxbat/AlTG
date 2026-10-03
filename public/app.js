@@ -8,6 +8,8 @@ const state = {
   channels: [],
   searching: false,
   authMode: 'login', // 'login' | 'register' — один и тот же экран/форма на оба режима
+  groups: [],
+  channelQuery: '',
 };
 
 // ---------- маленький DOM-хелпер ----------
@@ -120,8 +122,8 @@ function switchTab(name) {
     b.classList.toggle('is-active', active);
     b.setAttribute('aria-selected', String(active));
   });
-  document.getElementById('tab-search').classList.toggle('is-active', name === 'search');
-  document.getElementById('tab-channels').classList.toggle('is-active', name === 'channels');
+  document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('is-active', tab.id === `tab-${name}`));
+  if (name === 'alerts') loadAlerts();
 }
 
 // ---------- период (чипы) ----------
@@ -154,93 +156,225 @@ function selectWindow(minutes) {
   });
 }
 
-// ---------- каналы ----------
+// ---------- каналы и группы ----------
+
+const groupById = (id) => state.groups.find((g) => g.id === id);
+
+// Тот же смысл, что и view monitored_channels на сервере: канал включён
+// и он либо без группы, либо его группа включена.
+function isMonitored(channel) {
+  const group = channel.groupId != null ? groupById(channel.groupId) : null;
+  return channel.isActive && (!group || group.isActive);
+}
 
 async function loadChannels() {
-  state.channels = await api('/api/channels');
+  [state.channels, state.groups] = await Promise.all([api('/api/channels'), api('/api/groups')]);
   renderChannels();
   updateSearchAvailability();
 }
 
-function renderChannels() {
-  const list = document.getElementById('channelsList');
-  const empty = document.getElementById('channelsEmpty');
-  const countBadge = document.getElementById('channelsCount');
+const channelPath = (username) => `/api/channels/${encodeURIComponent(username.replace('@', ''))}`;
+const jsonBody = (data) => ({ body: JSON.stringify(data) });
 
-  list.innerHTML = '';
-  countBadge.textContent = state.channels.length ? `(${state.channels.length})` : '';
-  empty.hidden = state.channels.length > 0;
-
-  for (const channel of state.channels) {
-    const toggleId = `active-${channel.username.replace(/[^a-z0-9]/gi, '')}`;
-
-    const switchEl = el('label', { class: 'switch' }, [
-      el('input', {
-        type: 'checkbox',
-        id: toggleId,
-        ...(channel.isActive ? { checked: 'checked' } : {}),
-        onchange: (e) => toggleChannelActive(channel.username, e.target.checked),
-      }),
-      el('span', { class: 'switch__track' }),
-    ]);
-
-    const deleteBtn = el('button', { class: 'btn btn--danger', type: 'button' }, 'Удалить');
-    wireConfirmDelete(deleteBtn, channel.username);
-
-    const row = el('li', { class: 'channel-row' }, [
-      el('div', { class: 'channel-row__info' }, [
-        el('div', { class: 'channel-row__title', text: channel.title || channel.username }),
-        el('div', { class: 'channel-row__username', text: channel.username }),
-      ]),
-      el('div', { class: 'channel-row__actions' }, [switchEl, deleteBtn]),
-    ]);
-
-    list.appendChild(row);
+/** Любое изменение каналов/групп: выполнить, показать ошибку если была, перечитать список. */
+async function mutateChannels(action) {
+  const banner = document.getElementById('channelsError');
+  banner.hidden = true;
+  try {
+    await action();
+  } catch (error) {
+    banner.textContent = error.message;
+    banner.hidden = false;
   }
+  await loadChannels();
+}
+
+function switchControl(checked, label, onChange) {
+  return el('label', { class: 'switch' }, [
+    el('input', {
+      type: 'checkbox',
+      'aria-label': label,
+      ...(checked ? { checked: 'checked' } : {}),
+      onchange: (e) => onChange(e.target.checked),
+    }),
+    el('span', { class: 'switch__track' }),
+  ]);
 }
 
 // Удаление в два клика вместо блокирующего confirm(): первый клик просит
-// подтвердить, второй в течение 3 секунд — удаляет.
-function wireConfirmDelete(button, username) {
-  let armed = false;
+// подтвердить, второй в течение 3 секунд — выполняет.
+function confirmButton(label, action) {
+  const button = el('button', { class: 'btn btn--danger', type: 'button' }, label);
   let timer = null;
-
-  button.addEventListener('click', async () => {
-    if (!armed) {
-      armed = true;
-      button.textContent = 'Точно удалить?';
+  button.addEventListener('click', () => {
+    if (!timer) {
+      button.textContent = 'Точно?';
       timer = setTimeout(() => {
-        armed = false;
-        button.textContent = 'Удалить';
+        timer = null;
+        button.textContent = label;
       }, 3000);
       return;
     }
     clearTimeout(timer);
     button.disabled = true;
-    try {
-      await api(`/api/channels/${encodeURIComponent(username.replace('@', ''))}`, { method: 'DELETE' });
-      await loadChannels();
-    } catch (error) {
-      alert(error.message);
-      button.disabled = false;
-      armed = false;
-      button.textContent = 'Удалить';
-    }
+    action();
   });
+  return button;
 }
 
-async function toggleChannelActive(username, isActive) {
+const includesText = (text, query) => (text || '').toLowerCase().includes(query);
+
+function renderChannels() {
+  const tree = document.getElementById('channelsTree');
+  const query = state.channelQuery.trim().toLowerCase();
+  document.getElementById('channelsCount').textContent = state.channels.length ? `(${state.channels.length})` : '';
+  tree.innerHTML = '';
+
+  const sections = [
+    ...state.groups.map((group) => ({ group, channels: state.channels.filter((c) => c.groupId === group.id) })),
+    { group: null, channels: state.channels.filter((c) => c.groupId == null) },
+  ];
+
+  let shown = 0;
+  for (const { group, channels } of sections) {
+    if (!group && channels.length === 0) continue; // пустой раздел «Без группы» не показываем
+    // Поиск по названию группы показывает её целиком, иначе — только совпавшие каналы.
+    const groupMatched = !query || (group && includesText(group.name, query));
+    const visible = groupMatched
+      ? channels
+      : channels.filter((c) => includesText(c.title, query) || includesText(c.username, query));
+    if (!groupMatched && visible.length === 0) continue;
+    tree.appendChild(renderGroup(group, visible, channels.length));
+    shown++;
+  }
+
+  const hasAnything = state.channels.length > 0 || state.groups.length > 0;
+  document.getElementById('channelsEmpty').hidden = hasAnything;
+  document.getElementById('channelsNoMatch').hidden = !query || shown > 0;
+}
+
+function renderGroup(group, channels, total) {
+  const off = Boolean(group && !group.isActive);
+  const head = group
+    ? el('div', { class: 'group__head' }, [
+        el('button', {
+          class: 'group__name',
+          type: 'button',
+          title: 'Переименовать',
+          onclick: (e) => startRename(e.currentTarget, group),
+        }, group.name),
+        el('span', { class: 'group__count', text: String(total) }),
+        switchControl(group.isActive, `Мониторинг группы «${group.name}»`, (on) =>
+          mutateChannels(() => api(`/api/groups/${group.id}`, { method: 'PATCH', ...jsonBody({ isActive: on }) }))
+        ),
+        confirmButton('Удалить', () => mutateChannels(() => api(`/api/groups/${group.id}`, { method: 'DELETE' }))),
+      ])
+    : el('div', { class: 'group__head' }, [el('span', { class: 'group__name group__name--plain', text: 'Без группы' })]);
+
+  const list = el('ul', { class: 'channels-list' }, channels.map((c) => renderChannelRow(c, off)));
+  if (group && total === 0) {
+    list.appendChild(el('li', { class: 'group__note', text: 'Пусто. Выберите эту группу в строке нужного канала.' }));
+  }
+  return el('section', { class: 'group' + (off ? ' is-off' : '') }, [
+    head,
+    off ? el('p', { class: 'group__note', text: 'Группа выключена — её каналы не мониторятся.' }) : null,
+    list,
+  ]);
+}
+
+function renderChannelRow(channel, groupOff) {
+  const name = channel.title || channel.username;
+  const groupSelect = el('select', {
+    class: 'select',
+    'aria-label': `Группа канала ${name}`,
+    onchange: (e) =>
+      mutateChannels(() =>
+        api(channelPath(channel.username), {
+          method: 'PATCH',
+          ...jsonBody({ groupId: e.target.value ? Number(e.target.value) : null }),
+        })
+      ),
+  }, [
+    el('option', { value: '' }, 'Без группы'),
+    ...state.groups.map((g) =>
+      el('option', { value: String(g.id), ...(g.id === channel.groupId ? { selected: 'selected' } : {}) }, g.name)
+    ),
+  ]);
+
+  return el('li', { class: 'channel-row' + (channel.isActive && !groupOff ? '' : ' is-off') }, [
+    el('div', { class: 'channel-row__info' }, [
+      el('div', { class: 'channel-row__title', text: name }),
+      el('div', { class: 'channel-row__username', text: channel.isPrivate ? 'приватный канал' : channel.username }),
+    ]),
+    el('div', { class: 'channel-row__actions' }, [
+      state.groups.length ? groupSelect : null,
+      switchControl(channel.isActive, `Мониторинг канала ${name}`, (on) =>
+        mutateChannels(() => api(channelPath(channel.username), { method: 'PATCH', ...jsonBody({ isActive: on }) }))
+      ),
+      confirmButton('Удалить', () => mutateChannels(() => api(channelPath(channel.username), { method: 'DELETE' }))),
+    ]),
+  ]);
+}
+
+function startRename(button, group) {
+  const input = el('input', {
+    class: 'text-input text-input--inline',
+    value: group.name,
+    maxlength: '60',
+    'aria-label': 'Новое название группы',
+  });
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    if (save && name && name !== group.name) {
+      mutateChannels(() => api(`/api/groups/${group.id}`, { method: 'PATCH', ...jsonBody({ name }) }));
+    } else {
+      renderChannels();
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  button.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+document.getElementById('channelSearch').addEventListener('input', (e) => {
+  state.channelQuery = e.target.value;
+  renderChannels();
+});
+
+document.getElementById('newGroupBtn').addEventListener('click', (e) => {
+  const form = document.getElementById('groupForm');
+  form.hidden = !form.hidden;
+  e.currentTarget.setAttribute('aria-expanded', String(!form.hidden));
+  if (!form.hidden) document.getElementById('groupNameInput').focus();
+});
+
+async function addGroup() {
+  const input = document.getElementById('groupNameInput');
+  const error = document.getElementById('groupError');
+  error.hidden = true;
   try {
-    await api(`/api/channels/${encodeURIComponent(username.replace('@', ''))}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ isActive }),
-    });
+    await api('/api/groups', { method: 'POST', ...jsonBody({ name: input.value }) });
+    input.value = '';
+    document.getElementById('groupForm').hidden = true;
+    document.getElementById('newGroupBtn').setAttribute('aria-expanded', 'false');
     await loadChannels();
-  } catch (error) {
-    alert(error.message);
-    await loadChannels(); // откатить переключатель к реальному состоянию
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
   }
 }
+document.getElementById('addGroupBtn').addEventListener('click', addGroup);
+document.getElementById('groupNameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addGroup();
+});
 
 const addChannelBtn = document.getElementById('addChannelBtn');
 const channelInput = document.getElementById('channelInput');
@@ -259,7 +393,7 @@ async function addChannel() {
   addChannelBtn.disabled = true;
   addChannelBtn.textContent = 'Добавляю…';
   try {
-    await api('/api/channels', { method: 'POST', body: JSON.stringify({ username: value }) });
+    await api('/api/channels', { method: 'POST', ...jsonBody({ username: value }) });
     channelInput.value = '';
     await loadChannels();
   } catch (error) {
@@ -380,7 +514,7 @@ async function loadPrivateDialogs() {
 }
 
 function updateSearchAvailability() {
-  const hasActive = state.channels.some((c) => c.isActive);
+  const hasActive = state.channels.some(isMonitored);
   const hint = document.getElementById('searchHint');
   const btn = document.getElementById('searchBtn');
   if (!hasActive) {
@@ -499,6 +633,207 @@ function renderResult(result) {
 function truncate(text, max) {
   if (text.length <= max) return text;
   return text.slice(0, max).trimEnd() + '…';
+}
+
+// ---------- алерты ----------
+
+const ALERT_INTERVAL_LABELS = {
+  15: 'каждые 15 минут',
+  30: 'каждые 30 минут',
+  60: 'каждый час',
+  180: 'каждые 3 часа',
+  300: 'каждые 5 часов',
+  600: 'каждые 10 часов',
+  1440: 'раз в сутки',
+};
+
+const byId = (id) => document.getElementById(id);
+let alertSettings = null;
+let alertsSaveTimer = null;
+
+async function loadAlerts() {
+  try {
+    const [settings, topics, groups] = await Promise.all([
+      api('/api/alerts/settings'),
+      api('/api/alerts/topics'),
+      api('/api/groups'),
+    ]);
+    alertSettings = settings;
+    state.groups = groups;
+    renderAlertSettings();
+    renderTopics(topics);
+  } catch (error) {
+    showAlertsError(error.message);
+  }
+}
+
+function showAlertsError(message) {
+  byId('alertsError').textContent = message;
+  byId('alertsError').hidden = !message;
+}
+
+function renderAlertSettings() {
+  const s = alertSettings;
+  byId('alertsEnabled').checked = s.enabled;
+  document.querySelector(`input[name="alertScope"][value="${s.scope}"]`).checked = true;
+  document.querySelector(`input[name="alertMode"][value="${s.mode}"]`).checked = true;
+  byId('alertDigestTime').value = s.digestTime;
+  byId('alertQuiet').checked = s.quietEnabled;
+  byId('alertQuietFrom').value = s.quietFrom;
+  byId('alertQuietTo').value = s.quietTo;
+  byId('alertMinMatches').value = s.minMatches;
+  byId('alertMaxPerDay').value = s.maxPerDay;
+
+  const interval = byId('alertInterval');
+  interval.innerHTML = '';
+  for (const [minutes, label] of Object.entries(ALERT_INTERVAL_LABELS)) {
+    interval.appendChild(
+      el('option', { value: minutes, ...(Number(minutes) === s.intervalMinutes ? { selected: 'selected' } : {}) }, label)
+    );
+  }
+
+  const groupsBox = byId('alertGroups');
+  groupsBox.hidden = s.scope !== 'groups';
+  groupsBox.innerHTML = '';
+  if (state.groups.length === 0) {
+    groupsBox.appendChild(el('p', { class: 'field__hint', text: 'Групп пока нет — создайте их во вкладке «Каналы».' }));
+  }
+  for (const group of state.groups) {
+    groupsBox.appendChild(
+      el('label', { class: 'checkbox' }, [
+        el('input', { type: 'checkbox', value: String(group.id), ...(s.groupIds.includes(group.id) ? { checked: 'checked' } : {}) }),
+        ` ${group.name}`,
+      ])
+    );
+  }
+}
+
+function readAlertSettings() {
+  const checked = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+  return {
+    enabled: byId('alertsEnabled').checked,
+    scope: checked('alertScope'),
+    groupIds: [...byId('alertGroups').querySelectorAll('input:checked')].map((i) => Number(i.value)),
+    intervalMinutes: Number(byId('alertInterval').value),
+    mode: checked('alertMode'),
+    digestTime: byId('alertDigestTime').value,
+    quietEnabled: byId('alertQuiet').checked,
+    quietFrom: byId('alertQuietFrom').value,
+    quietTo: byId('alertQuietTo').value,
+    minMatches: Number(byId('alertMinMatches').value),
+    maxPerDay: Number(byId('alertMaxPerDay').value),
+  };
+}
+
+// Автосохранение: любое изменение настроек (кроме тем — у них свои запросы)
+// уходит на сервер через 400 мс; сервер нормализует значения, форма их
+// перерисовывает, так что вне допустимого диапазона ничего не «залипает».
+byId('tab-alerts').addEventListener('change', (e) => {
+  if (e.target.closest('#topicsList') || e.target.id === 'alertTopicInput') return;
+  byId('alertGroups').hidden = readAlertSettings().scope !== 'groups';
+  byId('alertsStatus').textContent = '';
+  clearTimeout(alertsSaveTimer);
+  alertsSaveTimer = setTimeout(async () => {
+    try {
+      alertSettings = await api('/api/alerts/settings', { method: 'PUT', body: JSON.stringify(readAlertSettings()) });
+      renderAlertSettings();
+      byId('alertsStatus').textContent = 'Сохранено';
+    } catch (error) {
+      byId('alertsStatus').textContent = `Не сохранилось: ${error.message}`;
+    }
+  }, 400);
+});
+
+function renderTopics(topics) {
+  const list = byId('topicsList');
+  list.innerHTML = '';
+  if (topics.length === 0) {
+    list.appendChild(el('li', { class: 'topic topic--empty', text: 'Тем пока нет' }));
+  }
+  for (const topic of topics) {
+    list.appendChild(
+      el('li', { class: 'topic' + (topic.isActive ? '' : ' is-off') }, [
+        el('label', { class: 'checkbox' }, [
+          el('input', {
+            type: 'checkbox',
+            'aria-label': `Искать по теме «${topic.label}»`,
+            ...(topic.isActive ? { checked: 'checked' } : {}),
+            onchange: (e) =>
+              mutateTopics(() =>
+                api(`/api/alerts/topics/${topic.id}`, { method: 'PATCH', body: JSON.stringify({ isActive: e.target.checked }) })
+              ),
+          }),
+          ` ${topic.label}`,
+        ]),
+        confirmButton('Удалить', () => mutateTopics(() => api(`/api/alerts/topics/${topic.id}`, { method: 'DELETE' }))),
+      ])
+    );
+  }
+}
+
+async function mutateTopics(action) {
+  const error = byId('topicError');
+  error.hidden = true;
+  try {
+    await action();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  }
+  renderTopics(await api('/api/alerts/topics'));
+}
+
+async function addAlertTopic() {
+  const input = byId('alertTopicInput');
+  if (!input.value.trim()) return;
+  await mutateTopics(async () => {
+    await api('/api/alerts/topics', { method: 'POST', body: JSON.stringify({ label: input.value }) });
+    input.value = '';
+  });
+}
+byId('addTopicBtn').addEventListener('click', addAlertTopic);
+byId('alertTopicInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addAlertTopic();
+});
+
+byId('previewAlertsBtn').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  const out = byId('alertsPreview');
+  showAlertsError('');
+  out.innerHTML = '';
+  button.disabled = true;
+  button.textContent = 'Проверяю…';
+  try {
+    const { results } = await api('/api/alerts/preview', { method: 'POST' });
+    results.forEach((r) => out.appendChild(renderAlertPreview(r)));
+  } catch (error) {
+    showAlertsError(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Проверить сейчас';
+  }
+});
+
+function renderAlertPreview(r) {
+  const items = r.result ? r.result.items : [];
+  const status = r.error
+    ? `Ошибка: ${r.error}`
+    : r.wouldSend
+      ? `Пришёл бы алерт · постов: ${items.length}`
+      : `Не пришёл бы · постов: ${items.length}, нужно от ${alertSettings.minMatches}`;
+  return el('div', { class: 'preview' }, [
+    el('div', { class: 'preview__head' }, [
+      el('span', { class: 'preview__topic', text: r.topic }),
+      el('span', { class: 'preview__status' + (r.wouldSend ? ' is-yes' : ''), text: status }),
+    ]),
+    items.length && r.result.summary ? el('p', { class: 'preview__summary', text: r.result.summary }) : null,
+    ...items.slice(0, 5).map((item) =>
+      el('a', { class: 'preview__item', href: item.link, target: '_blank', rel: 'noopener' }, [
+        el('span', { class: 'preview__channel', text: `${item.channelTitle || item.channel} · ${item.postedAtFormatted}` }),
+        el('span', { text: item.gist }),
+      ])
+    ),
+  ]);
 }
 
 // ---------- старт ----------

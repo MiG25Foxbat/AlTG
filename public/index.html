@@ -11,7 +11,7 @@
   <section id="authScreen" class="auth-screen" hidden>
     <div class="auth-card">
       <h1>Telegram-алерты</h1>
-      <p class="app__subtitle">Поиск и суммаризация постов из открытых каналов</p>
+      <p class="app__subtitle">Поиск, мониторинг и алерты по Telegram-каналам</p>
 
       <div class="field">
         <label class="field__label" for="authUsername">Логин</label>
@@ -34,7 +34,7 @@
   <div class="app" hidden>
     <header class="app__header">
       <h1>Telegram-алерты</h1>
-      <p class="app__subtitle">Поиск и суммаризация постов из открытых каналов</p>
+      <p class="app__subtitle">Поиск, мониторинг и алерты по Telegram-каналам</p>
       <div class="app__account">
         <span id="accountUsername" class="app__account-name"></span>
         <button id="logoutBtn" class="btn btn--link" type="button">Выйти</button>
@@ -44,6 +44,7 @@
     <nav class="tabs" role="tablist">
       <button class="tabs__btn is-active" data-tab="search" role="tab" aria-selected="true">Поиск</button>
       <button class="tabs__btn" data-tab="channels" role="tab" aria-selected="false">Каналы <span id="channelsCount" class="tabs__badge"></span></button>
+      <button class="tabs__btn" data-tab="alerts" role="tab" aria-selected="false">Алерты</button>
     </nav>
 
     <!-- ===== Вкладка "Поиск" ===== -->
@@ -93,25 +94,37 @@
 
     <!-- ===== Вкладка "Каналы" ===== -->
     <section id="tab-channels" class="tab">
+      <div class="toolbar">
+        <input id="channelSearch" class="text-input" type="search" placeholder="Поиск по каналам и группам"
+          autocomplete="off" aria-label="Поиск по каналам и группам" />
+        <button id="newGroupBtn" class="btn btn--secondary" type="button" aria-expanded="false">Новая группа</button>
+      </div>
+
+      <div id="groupForm" class="field" hidden>
+        <div class="add-row">
+          <input id="groupNameInput" class="text-input" type="text" maxlength="60"
+            placeholder="Название, например: Крипта" autocomplete="off" aria-label="Название группы" />
+          <button id="addGroupBtn" class="btn btn--primary" type="button">Создать</button>
+        </div>
+        <p class="field__hint">Группа — папка для каналов. Выключив группу, вы разом останавливаете мониторинг всех её каналов.</p>
+        <div id="groupError" class="field__error" hidden></div>
+      </div>
+
       <div class="field">
         <label class="field__label" for="channelInput">Добавить открытый канал</label>
         <div class="add-row">
-          <input
-            id="channelInput"
-            class="text-input"
-            type="text"
-            placeholder="@channel_name или ссылка t.me/channel_name"
-            autocomplete="off"
-          />
-          <button id="addChannelBtn" class="btn btn--primary">Добавить</button>
+          <input id="channelInput" class="text-input" type="text"
+            placeholder="@channel_name или t.me/channel_name" autocomplete="off" />
+          <button id="addChannelBtn" class="btn btn--primary" type="button">Добавить</button>
         </div>
         <div id="addChannelError" class="field__error" hidden></div>
       </div>
 
-      <ul id="channelsList" class="channels-list"></ul>
-      <div id="channelsEmpty" class="empty-state" hidden>
-        Пока нет ни одного канала. Добавьте первый выше — пока поддерживаются только открытые каналы.
-      </div>
+      <div id="channelsError" class="banner banner--error" hidden></div>
+      <p class="field__hint field__hint--list">Переключатель — мониторинг канала или группы. Название группы можно изменить, нажав на него. В группу канал переносится через список в его строке.</p>
+      <div id="channelsTree"></div>
+      <p id="channelsNoMatch" class="empty-state" hidden>Ничего не найдено</p>
+      <div id="channelsEmpty" class="empty-state" hidden>Пока нет ни одного канала — добавьте первый выше.</div>
 
       <!-- ===== Личный Telegram-аккаунт (для приватных каналов) ===== -->
       <div class="section-divider"></div>
@@ -162,6 +175,73 @@
           Нет каналов/групп без публичного имени, куда можно подключиться — либо все уже добавлены.
         </div>
       </div>
+    </section>
+
+    <!-- ===== Вкладка "Алерты" ===== -->
+    <section id="tab-alerts" class="tab">
+      <div class="setting-row">
+        <div>
+          <div class="setting-row__title">Автоматические алерты</div>
+          <p class="field__hint">Сервис сам проверяет каналы по вашим темам и присылает найденное. Доставку подключим позже — пока можно всё настроить и посмотреть, что пришло бы сейчас.</p>
+        </div>
+        <label class="switch"><input id="alertsEnabled" type="checkbox" aria-label="Автоматические алерты" /><span class="switch__track"></span></label>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="alertTopicInput">Темы</label>
+        <ul id="topicsList" class="topics"></ul>
+        <div class="add-row">
+          <input id="alertTopicInput" class="text-input" type="text" maxlength="200"
+            placeholder="Например: ставка ЦБ, листинг на Binance" autocomplete="off" />
+          <button id="addTopicBtn" class="btn btn--secondary" type="button">Добавить</button>
+        </div>
+        <p class="field__hint">Алерт приходит, если в постах есть что-то по любой из отмеченных тем.</p>
+        <div id="topicError" class="field__error" hidden></div>
+      </div>
+
+      <div class="field">
+        <span class="field__label">Где искать</span>
+        <label class="radio"><input type="radio" name="alertScope" value="all" /> Во всех отслеживаемых каналах</label>
+        <label class="radio"><input type="radio" name="alertScope" value="groups" /> Только в выбранных группах</label>
+        <div id="alertGroups" class="checks" hidden></div>
+      </div>
+
+      <div class="field field--inline">
+        <label class="field__label" for="alertInterval">Проверять</label>
+        <select id="alertInterval" class="select"></select>
+      </div>
+
+      <div class="field">
+        <span class="field__label">Как присылать</span>
+        <label class="radio"><input type="radio" name="alertMode" value="instant" /> Сразу, как только что-то нашлось</label>
+        <label class="radio"><input type="radio" name="alertMode" value="digest" /> Одной сводкой в день, в
+          <input id="alertDigestTime" class="text-input text-input--time" type="time" aria-label="Время сводки" /></label>
+      </div>
+
+      <div class="field">
+        <label class="checkbox"><input id="alertQuiet" type="checkbox" /> Не беспокоить с
+          <input id="alertQuietFrom" class="text-input text-input--time" type="time" aria-label="Начало тихих часов" /> до
+          <input id="alertQuietTo" class="text-input text-input--time" type="time" aria-label="Конец тихих часов" /></label>
+        <p class="field__hint">Время московское. Найденное в тихие часы придёт после них.</p>
+      </div>
+
+      <div class="field field--inline">
+        <label class="field__label" for="alertMinMatches">Присылать, если найдено постов не меньше</label>
+        <input id="alertMinMatches" class="text-input text-input--num" type="number" min="1" max="50" />
+      </div>
+
+      <div class="field field--inline">
+        <label class="field__label" for="alertMaxPerDay">Не больше алертов в день</label>
+        <input id="alertMaxPerDay" class="text-input text-input--num" type="number" min="1" max="100" />
+      </div>
+
+      <div class="actions">
+        <button id="previewAlertsBtn" class="btn btn--secondary" type="button">Проверить сейчас</button>
+        <span id="alertsStatus" class="actions__status" role="status"></span>
+      </div>
+      <p class="field__hint">Настройки сохраняются сами. «Проверить сейчас» ищет по темам за выбранный интервал и показывает, пришёл бы алерт или нет.</p>
+      <div id="alertsError" class="banner banner--error" hidden></div>
+      <div id="alertsPreview"></div>
     </section>
   </div>
 
