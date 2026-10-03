@@ -7,6 +7,7 @@ export interface ChannelRow {
   is_private: 0 | 1;
   is_active: 0 | 1;
   added_at: number;
+  group_id: number | null;
 }
 
 export interface ChannelDto {
@@ -15,6 +16,7 @@ export interface ChannelDto {
   addedAt: number;
   isActive: boolean;
   isPrivate: boolean;
+  groupId: number | null;
 }
 
 function toDto(row: ChannelRow): ChannelDto {
@@ -24,6 +26,7 @@ function toDto(row: ChannelRow): ChannelDto {
     addedAt: row.added_at,
     isActive: row.is_active === 1,
     isPrivate: row.is_private === 1,
+    groupId: row.group_id ?? null,
   };
 }
 
@@ -41,6 +44,25 @@ export function normalizeChannelUsername(raw: string): string {
   return `@${value}`;
 }
 
+/**
+ * Параметр :username в URL: у публичных каналов это имя (нормализуем как
+ * обычно), у приватных — числовой id вида -100123…, который через
+ * normalizeChannelUsername не проходит и должен оставаться как есть.
+ */
+export function parseChannelParam(raw: string): string {
+  return /^-?\d+$/.test(raw) ? raw : normalizeChannelUsername(raw);
+}
+
+/** Сколько каналов пользователя реально мониторится (с учётом выключенных групп). */
+export async function countMonitoredChannels(userId: number): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT COUNT(*) AS n FROM monitored_channels WHERE user_id = ?',
+    args: [userId],
+  });
+  return Number((result.rows[0] as unknown as { n: number }).n);
+}
+
 export async function listChannels(userId: number): Promise<ChannelDto[]> {
   const db = await getDb();
   const result = await db.execute({
@@ -54,7 +76,7 @@ export async function listChannels(userId: number): Promise<ChannelDto[]> {
 export async function listActiveChannelUsernames(userId: number): Promise<string[]> {
   const db = await getDb();
   const result = await db.execute({
-    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1 AND is_private = 0',
+    sql: 'SELECT channel_identifier FROM monitored_channels WHERE user_id = ? AND is_private = 0',
     args: [userId],
   });
   return (result.rows as unknown as { channel_identifier: string }[]).map(
@@ -101,7 +123,7 @@ export async function upsertChannel(
 export async function listActivePrivateChannelIds(userId: number): Promise<string[]> {
   const db = await getDb();
   const result = await db.execute({
-    sql: 'SELECT channel_identifier FROM user_channels WHERE user_id = ? AND is_active = 1 AND is_private = 1',
+    sql: 'SELECT channel_identifier FROM monitored_channels WHERE user_id = ? AND is_private = 1',
     args: [userId],
   });
   return (result.rows as unknown as { channel_identifier: string }[]).map((r) => r.channel_identifier);

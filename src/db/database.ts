@@ -129,6 +129,34 @@ async function initDb(): Promise<Client> {
 
   await ensureUsersAuthColumns(db);
 
+  await db.batch(
+    [
+      `CREATE TABLE IF NOT EXISTS channel_groups (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name       TEXT NOT NULL,
+        is_active  INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      )`,
+      // Одна строка на пользователя; настройки — JSON, потому что набор полей
+      // алертов ещё будет меняться (доставка не выбрана), а схема — нет.
+      `CREATE TABLE IF NOT EXISTS alert_settings (
+        user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        settings_json TEXT NOT NULL,
+        updated_at    INTEGER NOT NULL
+      )`,
+    ],
+    'write'
+  );
+  await ensureColumn(db, 'user_channels', 'group_id', 'INTEGER REFERENCES channel_groups(id) ON DELETE SET NULL');
+  // Единственное место, где определено «канал реально мониторится»: включён
+  // сам канал И (он без группы ИЛИ его группа включена). Все выборки постов
+  // и списки каналов для опроса идут через этот view, а не повторяют условие.
+  await db.execute(`CREATE VIEW IF NOT EXISTS monitored_channels AS
+    SELECT uc.* FROM user_channels uc
+    LEFT JOIN channel_groups g ON g.id = uc.group_id
+    WHERE uc.is_active = 1 AND (uc.group_id IS NULL OR g.is_active = 1)`);
+
   logger.info(`БД готова (libSQL): ${process.env.TURSO_DATABASE_URL ? 'Turso (remote)' : url}`);
   return db;
 }
@@ -142,18 +170,16 @@ async function initDb(): Promise<Client> {
  * SQLite/libSQL считает каждый NULL уникальным сам по себе.
  */
 async function ensureUsersAuthColumns(db: Client): Promise<void> {
-  const info = await db.execute('PRAGMA table_info(users)');
-  const existingColumns = new Set(
-    (info.rows as unknown as { name: string }[]).map((row) => row.name)
-  );
-
-  if (!existingColumns.has('username')) {
-    await db.execute('ALTER TABLE users ADD COLUMN username TEXT');
-  }
-  if (!existingColumns.has('password_hash')) {
-    await db.execute('ALTER TABLE users ADD COLUMN password_hash TEXT');
-  }
+  await ensureColumn(db, 'users', 'username', 'TEXT');
+  await ensureColumn(db, 'users', 'password_hash', 'TEXT');
   await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+}
+
+/** Идемпотентный ADD COLUMN: SQLite не умеет `ADD COLUMN IF NOT EXISTS`. */
+async function ensureColumn(db: Client, table: string, column: string, definition: string): Promise<void> {
+  const info = await db.execute(`PRAGMA table_info(${table})`);
+  const exists = (info.rows as unknown as { name: string }[]).some((row) => row.name === column);
+  if (!exists) await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 export function closeDb() {

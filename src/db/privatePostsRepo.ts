@@ -48,11 +48,10 @@ export async function getPrivatePostsSince(
   const db = await getDb();
   const result = await db.execute({
     sql: `SELECT private_posts.* FROM private_posts
-          JOIN user_channels
+          JOIN monitored_channels AS user_channels
             ON user_channels.channel_identifier = private_posts.channel_identifier
            AND user_channels.user_id = private_posts.user_id
           WHERE private_posts.user_id = ?
-            AND user_channels.is_active = 1
             AND private_posts.posted_at >= ?
           ORDER BY private_posts.posted_at DESC
           LIMIT ?`,

@@ -60,10 +60,9 @@ export async function getPostsSince(
   const db = await getDb();
   const result = await db.execute({
     sql: `SELECT public_posts.* FROM public_posts
-          JOIN user_channels
+          JOIN monitored_channels AS user_channels
             ON user_channels.channel_identifier = public_posts.channel_username
           WHERE user_channels.user_id = ?
-            AND user_channels.is_active = 1
             AND public_posts.posted_at >= ?
           ORDER BY public_posts.posted_at DESC
           LIMIT ?`,

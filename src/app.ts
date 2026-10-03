@@ -6,7 +6,18 @@ import {
   setChannelActive,
   removeChannel,
   normalizeChannelUsername,
+  parseChannelParam,
+  countMonitoredChannels,
 } from './db/channelsRepo';
+import { listGroups, createGroup, updateGroup, deleteGroup, setChannelGroup, normalizeGroupName } from './db/groupsRepo';
+import {
+  getAlertSettings,
+  saveAlertSettings,
+  listTopics,
+  addTopic,
+  setTopicActive,
+  deleteTopic,
+} from './db/alertsRepo';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
 import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
 import { hashPassword, verifyPassword } from './utils/crypto';
@@ -168,10 +179,22 @@ export async function createApp(userBot: IUserBotReader) {
     res.status(201).json(channel);
   });
 
+  // Тело — любое из полей: isActive (вкл/выкл мониторинг), groupId (number | null).
   app.patch('/api/channels/:username', requireAuth, async (req: AuthedRequest, res: Response) => {
-    const username = normalizeChannelUsername(String(req.params.username));
-    const isActive = Boolean(req.body?.isActive);
-    const updated = await setChannelActive(req.userId!, username, isActive);
+    const username = parseChannelParam(String(req.params.username));
+    if (req.body && 'groupId' in req.body) {
+      const groupId = req.body.groupId === null ? null : Number(req.body.groupId);
+      if (groupId !== null && !Number.isInteger(groupId)) {
+        return res.status(400).json({ error: 'Некорректная группа' });
+      }
+      if (!(await setChannelGroup(req.userId!, username, groupId))) {
+        return res.status(404).json({ error: 'Канал или группа не найдены' });
+      }
+    }
+    if (req.body && 'isActive' in req.body) {
+      await setChannelActive(req.userId!, username, Boolean(req.body.isActive));
+    }
+    const updated = (await listChannels(req.userId!)).find((c) => c.username === username);
     if (!updated) {
       return res.status(404).json({ error: `Канал ${username} не найден` });
     }
@@ -179,7 +202,7 @@ export async function createApp(userBot: IUserBotReader) {
   });
 
   app.delete('/api/channels/:username', requireAuth, async (req: AuthedRequest, res: Response) => {
-    const username = normalizeChannelUsername(String(req.params.username));
+    const username = parseChannelParam(String(req.params.username));
     const removed = await removeChannel(req.userId!, username);
     if (!removed) {
       return res.status(404).json({ error: `Канал ${username} не найден` });
@@ -264,6 +287,119 @@ export async function createApp(userBot: IUserBotReader) {
     res.status(201).json(channel);
   });
 
+  // --- Группы каналов ---
+
+  const idParam = (req: Request) => Number(req.params.id);
+
+  app.get('/api/groups', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json(await listGroups(req.userId!));
+  });
+
+  app.post('/api/groups', requireAuth, async (req: AuthedRequest, res: Response) => {
+    let name: string;
+    try {
+      name = normalizeGroupName(req.body?.name);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(201).json(await createGroup(req.userId!, name));
+  });
+
+  app.patch('/api/groups/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const patch: { name?: string; isActive?: boolean } = {};
+    try {
+      if (req.body && 'name' in req.body) patch.name = normalizeGroupName(req.body.name);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
+    }
+    if (req.body && 'isActive' in req.body) patch.isActive = Boolean(req.body.isActive);
+    const group = await updateGroup(req.userId!, idParam(req), patch);
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    res.json(group);
+  });
+
+  app.delete('/api/groups/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+    if (!(await deleteGroup(req.userId!, idParam(req)))) {
+      return res.status(404).json({ error: 'Группа не найдена' });
+    }
+    res.status(204).end();
+  });
+
+  // --- Алерты: настройки и темы (доставка пока не подключена — см. /api/alerts/preview) ---
+
+  app.get('/api/alerts/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json(await getAlertSettings(req.userId!));
+  });
+
+  app.put('/api/alerts/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json(await saveAlertSettings(req.userId!, req.body));
+  });
+
+  app.get('/api/alerts/topics', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json(await listTopics(req.userId!));
+  });
+
+  app.post('/api/alerts/topics', requireAuth, async (req: AuthedRequest, res: Response) => {
+    try {
+      res.status(201).json(await addTopic(req.userId!, req.body?.label));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch('/api/alerts/topics/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+    if (!(await setTopicActive(req.userId!, idParam(req), Boolean(req.body?.isActive)))) {
+      return res.status(404).json({ error: 'Тема не найдена' });
+    }
+    res.status(204).end();
+  });
+
+  app.delete('/api/alerts/topics/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
+    if (!(await deleteTopic(req.userId!, idParam(req)))) {
+      return res.status(404).json({ error: 'Тема не найдена' });
+    }
+    res.status(204).end();
+  });
+
+  /**
+   * «Что пришло бы сейчас»: поиск по каждой активной теме за окно = интервал
+   * проверки, с учётом области (все каналы / выбранные группы) и порога
+   * minMatches. Ничего не отправляет — канал доставки ещё не выбран.
+   * ponytail: последовательно по темам и без планировщика; когда появится
+   * доставка — вызывать этот же код из планировщика по intervalMinutes.
+   */
+  app.post('/api/alerts/preview', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const userId = req.userId!;
+    const [settings, topics] = await Promise.all([getAlertSettings(userId), listTopics(userId)]);
+    const activeTopics = topics.filter((t) => t.isActive);
+    if (activeTopics.length === 0) {
+      return res.status(400).json({ error: 'Добавьте хотя бы одну активную тему' });
+    }
+
+    let onlyChannels: Set<string> | undefined;
+    if (settings.scope === 'groups') {
+      onlyChannels = new Set(
+        (await listChannels(userId))
+          .filter((c) => c.groupId !== null && settings.groupIds.includes(c.groupId))
+          .map((c) => c.username)
+      );
+      if (onlyChannels.size === 0) {
+        return res.status(400).json({ error: 'В выбранных группах нет каналов' });
+      }
+    }
+
+    const results = [];
+    for (const topic of activeTopics) {
+      try {
+        const result = await analyzeTopic(userBot, userId, topic.label, settings.intervalMinutes, onlyChannels);
+        results.push({ topic: topic.label, wouldSend: result.items.length >= settings.minMatches, result });
+      } catch (error: any) {
+        results.push({ topic: topic.label, wouldSend: false, error: error?.message || 'Ошибка анализа' });
+      }
+    }
+    res.json({ results });
+  });
+
   // --- Настройки для интерфейса (публично — статичный список, не тянет вход) ---
 
   app.get('/api/time-windows', (_req, res) => {
@@ -279,10 +415,10 @@ export async function createApp(userBot: IUserBotReader) {
     if (!topic) {
       return res.status(400).json({ error: 'Введите тему запроса' });
     }
-    if ((await listChannels(req.userId!)).filter((c) => c.isActive).length === 0) {
+    if ((await countMonitoredChannels(req.userId!)) === 0) {
       return res
         .status(400)
-        .json({ error: 'Нет ни одного активного канала — добавьте канал во вкладке «Каналы»' });
+        .json({ error: 'Нет ни одного активного канала — добавьте или включите канал во вкладке «Каналы»' });
     }
 
     const result = await analyzeTopic(userBot, req.userId!, topic, windowMinutes);

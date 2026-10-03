@@ -59,7 +59,9 @@ export async function analyzeTopic(
   userBot: IUserBotReader,
   userId: number,
   topic: string,
-  windowMinutes: number
+  windowMinutes: number,
+  /** Если задан — анализируются только посты из этих каналов (алерты по группам). */
+  onlyChannels?: Set<string>
 ): Promise<AnalyzeResult> {
   const startedAt = Date.now();
   const cutoff = windowMinutesToCutoff(windowMinutes);
@@ -80,6 +82,7 @@ export async function analyzeTopic(
     ...publicPosts.map((p) => ({ channel: p.channel_username, isPrivate: false, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
     ...privatePosts.map((p) => ({ channel: p.channel_identifier, isPrivate: true, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
   ]
+    .filter((p) => !onlyChannels || onlyChannels.has(p.channel))
     .sort((a, b) => b.postedAt - a.postedAt)
     .slice(0, POSTS_FETCHED_FROM_DB_CAP);
 
