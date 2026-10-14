@@ -13,9 +13,16 @@ test('getDb: создаёт все таблицы новой многополь�
   const names = result.rows.map((row) => (row as unknown as { name: string }).name);
   for (const expected of [
     'activity_log',
+    'alert_destinations',
+    'alert_feedback',
+    'alert_reports',
+    'bot_link_tokens',
+    'outbox',
     'private_posts',
     'public_posts',
+    'service_locks',
     'telegram_accounts',
+    'topic_seen_posts',
     'topics',
     'user_channels',
     'users',

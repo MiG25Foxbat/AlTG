@@ -10,14 +10,7 @@ import {
   countMonitoredChannels,
 } from './db/channelsRepo';
 import { listGroups, createGroup, updateGroup, deleteGroup, setChannelGroup, normalizeGroupName } from './db/groupsRepo';
-import {
-  getAlertSettings,
-  saveAlertSettings,
-  listTopics,
-  addTopic,
-  setTopicActive,
-  deleteTopic,
-} from './db/alertsRepo';
+import { listTopics, addTopic, updateTopic, deleteTopic, resolveTopicChannels } from './db/alertsRepo';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
 import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
 import { hashPassword, verifyPassword } from './utils/crypto';
@@ -325,15 +318,7 @@ export async function createApp(userBot: IUserBotReader) {
     res.status(204).end();
   });
 
-  // --- Алерты: настройки и темы (доставка пока не подключена — см. /api/alerts/preview) ---
-
-  app.get('/api/alerts/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
-    res.json(await getAlertSettings(req.userId!));
-  });
-
-  app.put('/api/alerts/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
-    res.json(await saveAlertSettings(req.userId!, req.body));
-  });
+  // --- Алерты: подписки (тема + свои настройки). Доставка — см. планировщик ---
 
   app.get('/api/alerts/topics', requireAuth, async (req: AuthedRequest, res: Response) => {
     res.json(await listTopics(req.userId!));
@@ -341,17 +326,22 @@ export async function createApp(userBot: IUserBotReader) {
 
   app.post('/api/alerts/topics', requireAuth, async (req: AuthedRequest, res: Response) => {
     try {
-      res.status(201).json(await addTopic(req.userId!, req.body?.label));
+      res.status(201).json(await addTopic(req.userId!, req.body?.label, req.body?.settings));
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
   app.patch('/api/alerts/topics/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
-    if (!(await setTopicActive(req.userId!, idParam(req), Boolean(req.body?.isActive)))) {
-      return res.status(404).json({ error: 'Тема не найдена' });
+    const { label, isActive, settings } = req.body ?? {};
+    let topic;
+    try {
+      topic = await updateTopic(req.userId!, idParam(req), { label, isActive, settings });
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
-    res.status(204).end();
+    if (!topic) return res.status(404).json({ error: 'Тема не найдена' });
+    res.json(topic);
   });
 
   app.delete('/api/alerts/topics/:id', requireAuth, async (req: AuthedRequest, res: Response) => {
@@ -362,37 +352,28 @@ export async function createApp(userBot: IUserBotReader) {
   });
 
   /**
-   * «Что пришло бы сейчас»: поиск по каждой активной теме за окно = интервал
-   * проверки, с учётом области (все каналы / выбранные группы) и порога
-   * minMatches. Ничего не отправляет — канал доставки ещё не выбран.
-   * ponytail: последовательно по темам и без планировщика; когда появится
-   * доставка — вызывать этот же код из планировщика по intervalMinutes.
+   * «Что пришло бы сейчас»: поиск по каждой активной подписке за окно = её
+   * интервал, с её областью каналов и порогом minMatches. Ничего не отправляет.
+   * ponytail: последовательно по темам, каждая фетчит сама; на общий конвейер
+   * планировщика (один fetch на пользователя) переводится на этапе 6.
    */
   app.post('/api/alerts/preview', requireAuth, async (req: AuthedRequest, res: Response) => {
     const userId = req.userId!;
-    const [settings, topics] = await Promise.all([getAlertSettings(userId), listTopics(userId)]);
-    const activeTopics = topics.filter((t) => t.isActive);
+    const activeTopics = (await listTopics(userId)).filter((t) => t.isActive);
     if (activeTopics.length === 0) {
       return res.status(400).json({ error: 'Добавьте хотя бы одну активную тему' });
-    }
-
-    let onlyChannels: Set<string> | undefined;
-    if (settings.scope === 'groups') {
-      onlyChannels = new Set(
-        (await listChannels(userId))
-          .filter((c) => c.groupId !== null && settings.groupIds.includes(c.groupId))
-          .map((c) => c.username)
-      );
-      if (onlyChannels.size === 0) {
-        return res.status(400).json({ error: 'В выбранных группах нет каналов' });
-      }
     }
 
     const results = [];
     for (const topic of activeTopics) {
       try {
-        const result = await analyzeTopic(userBot, userId, topic.label, settings.intervalMinutes, onlyChannels);
-        results.push({ topic: topic.label, wouldSend: result.items.length >= settings.minMatches, result });
+        const onlyChannels = await resolveTopicChannels(userId, topic.settings);
+        if (onlyChannels && onlyChannels.size === 0) {
+          results.push({ topic: topic.label, wouldSend: false, error: 'В выбранных группах/каналах нет каналов' });
+          continue;
+        }
+        const result = await analyzeTopic(userBot, userId, topic.label, topic.settings.intervalMinutes, onlyChannels);
+        results.push({ topic: topic.label, wouldSend: result.items.length >= topic.settings.minMatches, result });
       } catch (error: any) {
         results.push({ topic: topic.label, wouldSend: false, error: error?.message || 'Ошибка анализа' });
       }
