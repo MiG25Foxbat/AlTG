@@ -1,5 +1,5 @@
 import path from 'path';
-import express, { NextFunction, Request, Response } from 'express';
+import express, { NextFunction, Request, RequestHandler, Response } from 'express';
 import {
   listChannels,
   upsertChannel,
@@ -13,6 +13,8 @@ import { listGroups, createGroup, updateGroup, deleteGroup, setChannelGroup, nor
 import { listTopics, addTopic, updateTopic, deleteTopic, resolveTopicChannels } from './db/alertsRepo';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
 import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
+import { createLinkToken, getLinkByUser } from './db/destinationsRepo';
+import { WEBHOOK_PATH } from './modules/BotModule/bot';
 import { hashPassword, verifyPassword } from './utils/crypto';
 import { createSessionToken, verifySessionToken, parseCookies, SESSION_COOKIE_NAME } from './utils/session';
 import {
@@ -62,9 +64,17 @@ function setSessionCookie(res: Response, userId: number) {
  * теперь приходит не «один на всё приложение» (как было до логина), а
  * из подписанной сессионной куки на каждый запрос — resolveUserId ниже.
  */
-export async function createApp(userBot: IUserBotReader) {
+export interface AppBotOptions {
+  username: string;
+  /** Только в режиме webhook */
+  webhookHandler?: RequestHandler;
+}
+
+export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
   const app = express();
   app.use(express.json());
+  // Telegram → бот. Подлинность проверяет сам обработчик по secret_token.
+  if (bot?.webhookHandler) app.post(WEBHOOK_PATH, bot.webhookHandler);
 
   // Читает и проверяет сессионную куку, кладёт userId в req, если сессия
   // валидна. Сама по себе не блокирует запрос — это делает requireAuth
@@ -349,6 +359,25 @@ export async function createApp(userBot: IUserBotReader) {
       return res.status(404).json({ error: 'Тема не найдена' });
     }
     res.status(204).end();
+  });
+
+  // --- Привязка бота: статус и одноразовая ссылка t.me/<бот>?start=<токен> (15 минут) ---
+
+  app.get('/api/alerts/bot', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const link = await getLinkByUser(req.userId!);
+    res.json({
+      configured: Boolean(bot),
+      botUsername: bot?.username ?? null,
+      linked: Boolean(link),
+      status: link?.status ?? null,
+      pausedUntil: link?.pausedUntil ?? null,
+    });
+  });
+
+  app.post('/api/alerts/bot-link', requireAuth, async (req: AuthedRequest, res: Response) => {
+    if (!bot) return res.status(503).json({ error: 'Бот не настроен на сервере (нет TELEGRAM_BOT_TOKEN)' });
+    const token = await createLinkToken(req.userId!, Math.floor(Date.now() / 1000));
+    res.json({ url: `https://t.me/${bot.username}?start=${token}` });
   });
 
   /**

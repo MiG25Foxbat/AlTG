@@ -3,6 +3,7 @@ dotenv.config();
 
 import { UserBot } from './modules/UserBotModule/UserBot';
 import { createApp } from './app';
+import { createAlertBot, AlertBot } from './modules/BotModule/bot';
 import { getDb, closeDb } from './db/database';
 import { ensureDefaultUser, migrateLegacyData, removeSharedSessionDuplicate } from './db/bootstrap';
 import { logger } from './utils/logger';
@@ -28,7 +29,20 @@ async function main() {
   const userId = await ensureDefaultUser();
   await migrateLegacyData(userId);
 
-  const app = await createApp(userBot);
+  // Бот алертов необязателен: без токена (или с ошибкой настройки) сайт работает как раньше.
+  let alertBot: AlertBot | undefined;
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    try {
+      alertBot = await createAlertBot(process.env.TELEGRAM_BOT_TOKEN);
+      alertBot.startPolling();
+    } catch (error: any) {
+      logger.error(`Бот алертов не запущен: ${error?.message || error}`);
+    }
+  } else {
+    logger.warn('TELEGRAM_BOT_TOKEN не задан — бот алертов выключен');
+  }
+
+  const app = await createApp(userBot, alertBot);
 
   const server = app.listen(PORT, () => {
     const url = `http://localhost:${PORT}`;
@@ -43,6 +57,7 @@ async function main() {
   const shutdown = async () => {
     logger.info('Останавливаюсь...');
     server.close();
+    await alertBot?.stop();
     await userBot.close();
     closeDb();
     process.exit(0);

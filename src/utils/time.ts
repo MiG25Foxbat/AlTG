@@ -60,3 +60,13 @@ export function formatMoscowTime(unixSeconds: number): string {
     minute: '2-digit',
   }).format(date);
 }
+
+const MSK_OFFSET_SEC = 3 * 3600; // МСК = UTC+3 круглый год
+
+/** Пауза «до утра» = до 09:00 МСК; нажали в 09:00 или позже — до 09:00 следующего дня. */
+export function nextMoscowMorning(nowUnixSeconds: number, hour = 9): number {
+  const local = nowUnixSeconds + MSK_OFFSET_SEC;
+  let target = local - (local % 86400) + hour * 3600;
+  if (local >= target) target += 86400;
+  return target - MSK_OFFSET_SEC;
+}

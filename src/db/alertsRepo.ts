@@ -184,3 +184,20 @@ export async function resolveTopicChannels(userId: number, settings: TopicSettin
       .map((c) => c.username)
   );
 }
+
+export type FeedbackAction = 'not_relevant' | 'less_often' | 'disable_topic' | 'undo_less_often' | 'undo_disable_topic';
+
+/** Нажатия кнопок под алертом — отдельной таблицей, чтобы потом смотреть качество. */
+export async function recordFeedback(
+  userId: number,
+  topicId: number,
+  reportId: number | null,
+  action: FeedbackAction,
+  now: number
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: 'INSERT INTO alert_feedback (user_id, topic_id, report_id, action, created_at) VALUES (?, ?, ?, ?, ?)',
+    args: [userId, topicId, reportId, action, now],
+  });
+}

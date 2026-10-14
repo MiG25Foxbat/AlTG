@@ -79,3 +79,14 @@ export async function deleteAccount(userId: number): Promise<void> {
   const db = await getDb();
   await db.execute({ sql: 'DELETE FROM telegram_accounts WHERE user_id = ?', args: [userId] });
 }
+
+/** Кто из пользователей подключил на сайте этот Telegram-аккаунт (привязка бота по /start). */
+export async function findUserIdByTelegramId(telegramUserId: number): Promise<number | undefined> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: 'SELECT user_id FROM telegram_accounts WHERE telegram_user_id = ?',
+    args: [telegramUserId],
+  });
+  const row = result.rows[0] as unknown as { user_id: number } | undefined;
+  return row?.user_id;
+}
