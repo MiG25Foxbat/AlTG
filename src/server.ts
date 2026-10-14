@@ -4,7 +4,7 @@ dotenv.config();
 import { UserBot } from './modules/UserBotModule/UserBot';
 import { createApp } from './app';
 import { getDb, closeDb } from './db/database';
-import { ensureDefaultUser, migrateLegacyData } from './db/bootstrap';
+import { ensureDefaultUser, migrateLegacyData, removeSharedSessionDuplicate } from './db/bootstrap';
 import { logger } from './utils/logger';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -24,7 +24,8 @@ async function main() {
   await userBot.init();
   logger.info('Telegram userbot подключён');
 
-  const userId = await ensureDefaultUser(userBot.client);
+  await removeSharedSessionDuplicate(userBot.client);
+  const userId = await ensureDefaultUser();
   await migrateLegacyData(userId);
 
   const app = await createApp(userBot);

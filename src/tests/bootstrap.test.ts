@@ -6,9 +6,9 @@ process.env.DB_PATH = ':memory:';
 process.env.SESSION_ENCRYPTION_KEY = randomBytes(32).toString('base64');
 
 import { getDb, closeDb } from '../db/database';
-import { migrateLegacyData, ensureDefaultUser } from '../db/bootstrap';
+import { migrateLegacyData, ensureDefaultUser, removeSharedSessionDuplicate } from '../db/bootstrap';
 import { getOrCreateSoleUser } from '../db/usersRepo';
-import { getDecryptedAccount } from '../db/telegramAccountsRepo';
+import { getDecryptedAccount, upsertAccount } from '../db/telegramAccountsRepo';
 import { listChannels } from '../db/channelsRepo';
 import { getPostsSince } from '../db/postsRepo';
 
@@ -52,31 +52,19 @@ test('migrateLegacyData: переносит старые channels/posts в но�
   closeDb();
 });
 
-test('ensureDefaultUser: создаёт users+telegram_accounts из client.getMe(), повторный вызов — no-op', async () => {
-  const fakeClient: any = {
-    getMe: async () => ({ id: 987654321, phone: '79990001122' }),
-    session: { save: () => 'FAKE_SESSION_STRING' },
-  };
+test('removeSharedSessionDuplicate: удаляет у пользователя только копию общей сессии, личную сессию того же номера не трогает', async () => {
+  const userId = await ensureDefaultUser();
+  const shared: any = { getMe: async () => ({ id: 555 }), session: { save: () => 'SHARED_SESSION' } };
 
-  const userId = await ensureDefaultUser(fakeClient);
-  const account = await getDecryptedAccount(userId);
-  assert.deepEqual(account, {
-    telegramUserId: 987654321,
-    phoneNumber: '79990001122',
-    sessionString: 'FAKE_SESSION_STRING',
-  });
+  // Дубль общей сессии (как раньше записывал старый bootstrap) — удаляется.
+  await upsertAccount(userId, { telegramUserId: 555, phoneNumber: '7999', sessionString: 'SHARED_SESSION' });
+  await removeSharedSessionDuplicate(shared);
+  assert.equal(await getDecryptedAccount(userId), undefined);
 
-  let calledAgain = false;
-  const secondFakeClient: any = {
-    getMe: async () => {
-      calledAgain = true;
-      return { id: 111, phone: '111' };
-    },
-    session: { save: () => 'SHOULD_NOT_BE_USED' },
-  };
-  const userIdAgain = await ensureDefaultUser(secondFakeClient);
-  assert.equal(userIdAgain, userId);
-  assert.equal(calledAgain, false); // аккаунт уже привязан — getMe() не должен вызываться повторно
+  // Тот же номер, но подключён через сайт отдельной сессией — остаётся.
+  await upsertAccount(userId, { telegramUserId: 555, phoneNumber: '7999', sessionString: 'PERSONAL_SESSION' });
+  await removeSharedSessionDuplicate(shared);
+  assert.equal((await getDecryptedAccount(userId))?.sessionString, 'PERSONAL_SESSION');
 
   closeDb();
 });

@@ -1,32 +1,39 @@
 import type { TelegramClient } from 'teleproto';
 import { getDb } from './database';
 import { getOrCreateSoleUser } from './usersRepo';
-import { hasAccount, upsertAccount } from './telegramAccountsRepo';
+import { getDecryptedAccount, deleteAccount } from './telegramAccountsRepo';
 import { logger } from '../utils/logger';
 
+/** Гарантирует, что есть хотя бы одна строка users (нужна для migrateLegacyData). */
+export async function ensureDefaultUser(): Promise<number> {
+  return getOrCreateSoleUser();
+}
+
 /**
- * Однооператорский мост к многопользовательской схеме (см. usersRepo.ts):
- * при первом запуске создаёт единственный users-row и привязывает к нему
- * текущий Telegram-аккаунт из SESSION_STRING в .env, запросив реальные
- * phone/telegram_user_id через client.getMe() — не заглушку. При
- * повторных запусках — no-op, getMe() не вызывается снова.
+ * Общий аккаунт из .env SESSION_STRING — служебный, он не должен лежать в
+ * telegram_accounts как «личный» аккаунт пользователя. Раньше старт сервера
+ * записывал его туда пользователю #1; тогда общий бот и «личный» клиент
+ * работали на одном ключе авторизации, и Telegram убивал сессию
+ * (AUTH_KEY_DUPLICATED). Удаляем ровно такую запись — с той же самой
+ * сессией. Если пользователь сам подключил этот же номер через сайт, у него
+ * другая сессия (новый ключ), и её не трогаем.
  */
-export async function ensureDefaultUser(client: TelegramClient): Promise<number> {
-  const userId = await getOrCreateSoleUser();
-  if (await hasAccount(userId)) {
-    return userId;
-  }
-
+export async function removeSharedSessionDuplicate(client: TelegramClient): Promise<void> {
   const me: any = await client.getMe();
-  const sessionString = client.session.save() as unknown as string;
+  const db = await getDb();
+  const row = (
+    await db.execute({
+      sql: 'SELECT user_id FROM telegram_accounts WHERE telegram_user_id = ?',
+      args: [Number(me.id.toString())],
+    })
+  ).rows[0] as unknown as { user_id: number } | undefined;
+  if (!row) return;
 
-  await upsertAccount(userId, {
-    telegramUserId: Number(me.id.toString()),
-    phoneNumber: String(me.phone || ''),
-    sessionString,
-  });
-  logger.info(`Telegram-аккаунт привязан к пользователю #${userId} (telegram_user_id=${me.id})`);
-  return userId;
+  const account = await getDecryptedAccount(row.user_id);
+  if (account && account.sessionString === (client.session.save() as unknown as string)) {
+    await deleteAccount(row.user_id);
+    logger.warn(`Удалён дубль сессии общего аккаунта у пользователя #${row.user_id}`);
+  }
 }
 
 /**
