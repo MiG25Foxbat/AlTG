@@ -255,6 +255,7 @@ export async function previewAlerts(deps: SchedulerDeps, userId: number, now: nu
         sentToAi: analysis.sentToAi,
         rejected: analysis.rejected.length,
         urgency: items.length ? maxUrgency(items.map((i) => i.urgency)) : null,
+        items,
         messages: wouldSend
           ? buildAlertMessages({ topicId: topic.id, topicLabel: topic.label, reportId: 0, items, now }).map((p) => p.text)
           : [],

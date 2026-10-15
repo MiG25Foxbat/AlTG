@@ -579,6 +579,14 @@ body {
 }
 .preview__item:hover span:last-child { text-decoration: underline; }
 .preview__channel { font-size: 12px; color: var(--text-muted); }
+.preview__link { color: var(--text-muted); margin-right: 10px; }
+
+.topic-card { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.topic-card.is-off { color: var(--text-muted); }
+.topic-card__meta { font-size: 12px; color: var(--text-muted); }
+.topic-card .topic > .checkbox { flex-wrap: nowrap; align-items: flex-start; }
+.topic-card__actions { display: flex; gap: 6px; flex-shrink: 0; }
+.topic-card__body { margin: 10px 0 4px 24px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 
 @media (max-width: 520px) {
   .channel-row { flex-wrap: wrap; }

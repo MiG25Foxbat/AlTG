@@ -646,21 +646,26 @@ const ALERT_INTERVAL_LABELS = {
   600: 'каждые 10 часов',
   1440: 'раз в сутки',
 };
+const DIGEST_LABELS = {
+  0: 'сразу, как нашлось',
+  1: 'сводкой раз в час',
+  3: 'сводкой раз в 3 часа',
+  6: 'сводкой раз в 6 часов',
+  12: 'сводкой раз в 12 часов',
+  24: 'сводкой раз в сутки',
+};
+const LOUD_LABELS = { urgent: 'только срочное', important: 'важное и срочное', normal: 'всё' };
 
 const byId = (id) => document.getElementById(id);
-let alertSettings = null;
-let alertsSaveTimer = null;
+const formatMsk = (unix) =>
+  new Date(unix * 1000).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 async function loadAlerts() {
+  showAlertsError('');
   try {
-    const [settings, topics, groups] = await Promise.all([
-      api('/api/alerts/settings'),
-      api('/api/alerts/topics'),
-      api('/api/groups'),
-    ]);
-    alertSettings = settings;
+    const [topics, groups, channels] = await Promise.all([api('/api/alerts/topics'), api('/api/groups'), api('/api/channels'), loadBotStatus()]);
     state.groups = groups;
-    renderAlertSettings();
+    state.channels = channels;
     renderTopics(topics);
   } catch (error) {
     showAlertsError(error.message);
@@ -672,77 +677,203 @@ function showAlertsError(message) {
   byId('alertsError').hidden = !message;
 }
 
-function renderAlertSettings() {
-  const s = alertSettings;
-  byId('alertsEnabled').checked = s.enabled;
-  document.querySelector(`input[name="alertScope"][value="${s.scope}"]`).checked = true;
-  document.querySelector(`input[name="alertMode"][value="${s.mode}"]`).checked = true;
-  byId('alertDigestTime').value = s.digestTime;
-  byId('alertQuiet').checked = s.quietEnabled;
-  byId('alertQuietFrom').value = s.quietFrom;
-  byId('alertQuietTo').value = s.quietTo;
-  byId('alertMinMatches').value = s.minMatches;
-  byId('alertMaxPerDay').value = s.maxPerDay;
+// ---------- бот: статус и привязка ----------
 
-  const interval = byId('alertInterval');
-  interval.innerHTML = '';
-  for (const [minutes, label] of Object.entries(ALERT_INTERVAL_LABELS)) {
-    interval.appendChild(
-      el('option', { value: minutes, ...(Number(minutes) === s.intervalMinutes ? { selected: 'selected' } : {}) }, label)
-    );
-  }
-
-  const groupsBox = byId('alertGroups');
-  groupsBox.hidden = s.scope !== 'groups';
-  groupsBox.innerHTML = '';
-  if (state.groups.length === 0) {
-    groupsBox.appendChild(el('p', { class: 'field__hint', text: 'Групп пока нет — создайте их во вкладке «Каналы».' }));
-  }
-  for (const group of state.groups) {
-    groupsBox.appendChild(
-      el('label', { class: 'checkbox' }, [
-        el('input', { type: 'checkbox', value: String(group.id), ...(s.groupIds.includes(group.id) ? { checked: 'checked' } : {}) }),
-        ` ${group.name}`,
-      ])
-    );
+async function loadBotStatus() {
+  const bot = await api('/api/alerts/bot');
+  const status = byId('botStatus');
+  const button = byId('botLinkBtn');
+  button.hidden = !bot.configured || (bot.linked && bot.status === 'active');
+  button.textContent = bot.linked ? 'Подключить заново' : 'Получать алерты';
+  if (!bot.configured) {
+    status.textContent = 'Бот не настроен на сервере (нет TELEGRAM_BOT_TOKEN) — алерты пока не отправляются.';
+  } else if (!bot.linked) {
+    status.textContent =
+      `Не подключён — алертам некуда приходить. Нажмите «Получать алерты» и запустите @${bot.botUsername}. ` +
+      'Если вы подключали на сайте свой Telegram-аккаунт, можно просто написать боту /start.';
+  } else if (bot.status !== 'active') {
+    status.textContent = 'Вы заблокировали бота в Telegram — алерты не приходят. Разблокируйте его или подключите заново.';
+  } else {
+    const paused = bot.pausedUntil && bot.pausedUntil * 1000 > Date.now();
+    status.textContent = `Подключён: алерты приходят в @${bot.botUsername}` + (paused ? ` · пауза до ${formatMsk(bot.pausedUntil)} МСК` : '');
   }
 }
 
-function readAlertSettings() {
-  const checked = (name) => document.querySelector(`input[name="${name}"]:checked`).value;
+byId('botLinkBtn').addEventListener('click', async (e) => {
+  const button = e.currentTarget;
+  const hint = byId('botLinkHint');
+  button.disabled = true;
+  try {
+    const { url } = await api('/api/alerts/bot-link', { method: 'POST' });
+    window.open(url, '_blank', 'noopener');
+    hint.replaceChildren(
+      'Откройте ссылку в Telegram и нажмите «Запустить». Ссылка одноразовая и действует 15 минут: ',
+      el('a', { href: url, target: '_blank', rel: 'noopener' }, url)
+    );
+    hint.hidden = false;
+  } catch (error) {
+    showAlertsError(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// Вернулись из Telegram — обновить статус привязки.
+window.addEventListener('focus', () => {
+  if (byId('tab-alerts').classList.contains('is-active')) loadBotStatus().catch(() => {});
+});
+
+// ---------- темы (подписки) со своими настройками ----------
+
+const topicSummary = (s) =>
+  `${ALERT_INTERVAL_LABELS[s.intervalMinutes]} · ${DIGEST_LABELS[s.digestHours] ?? `сводкой раз в ${s.digestHours} ч`} · звук: ${LOUD_LABELS[s.loudFrom]}`;
+
+function selectEl(field, labels, current) {
+  return el(
+    'select',
+    { class: 'select', 'data-f': field },
+    Object.entries(labels).map(([value, label]) => el('option', { value, ...(String(current) === value ? { selected: 'selected' } : {}) }, label))
+  );
+}
+
+const checkboxEl = (attrs, checked, label) =>
+  el('label', { class: 'checkbox' }, [el('input', { type: 'checkbox', ...attrs, ...(checked ? { checked: 'checked' } : {}) }), ` ${label}`]);
+
+function topicSettingsForm(topic) {
+  const s = topic.settings;
+  const scopeName = `scope-${topic.id}`;
+  const radio = (value, label) =>
+    el('label', { class: 'radio' }, [el('input', { type: 'radio', name: scopeName, value, ...(s.scope === value ? { checked: 'checked' } : {}) }), ` ${label}`]);
+
+  const groupsBox = el(
+    'div',
+    { class: 'checks', 'data-box': 'groups' },
+    state.groups.length
+      ? state.groups.map((g) => checkboxEl({ 'data-kind': 'group', value: String(g.id) }, s.groupIds.includes(g.id), g.name))
+      : el('p', { class: 'field__hint', text: 'Групп пока нет — создайте их во вкладке «Каналы».' })
+  );
+  const channelsBox = el(
+    'div',
+    { class: 'checks', 'data-box': 'channels' },
+    state.channels.length
+      ? state.channels.map((c) =>
+          checkboxEl({ 'data-kind': 'channel', value: c.username }, s.channels.includes(c.username), `${c.title || c.username}${c.isPrivate ? ' 🔒' : ''}`)
+        )
+      : el('p', { class: 'field__hint', text: 'Каналов пока нет — добавьте их во вкладке «Каналы».' })
+  );
+  const time = (field, value, label) => el('input', { class: 'text-input text-input--time', type: 'time', 'data-f': field, value, 'aria-label': label });
+  const num = (field, value, min, max) => el('input', { class: 'text-input text-input--num', type: 'number', 'data-f': field, value: String(value), min, max });
+  const inline = (label, control) => el('div', { class: 'field field--inline' }, [el('span', { class: 'field__label', text: label }), control]);
+
+  return el('div', { class: 'topic-card__body', hidden: 'hidden' }, [
+    el('div', { class: 'field' }, [
+      el('span', { class: 'field__label', text: 'Где искать' }),
+      radio('all', 'Во всех отслеживаемых каналах'),
+      radio('groups', 'В выбранных группах'),
+      groupsBox,
+      radio('channels', 'В выбранных каналах'),
+      channelsBox,
+    ]),
+    inline('Проверять', selectEl('intervalMinutes', ALERT_INTERVAL_LABELS, s.intervalMinutes)),
+    inline('Присылать', selectEl('digestHours', DIGEST_LABELS, s.digestHours)),
+    el('div', { class: 'field' }, [
+      el('div', { class: 'field--inline' }, [el('span', { class: 'field__label', text: 'Со звуком' }), selectEl('loudFrom', LOUD_LABELS, s.loudFrom)]),
+      el('p', {
+        class: 'field__hint',
+        text: 'Срочность каждому пункту ставит ИИ. Громкие алерты приходят сразу и со звуком — даже в тихие часы, на паузе и в режиме сводки. Остальные — без звука.',
+      }),
+    ]),
+    el('div', { class: 'field' }, [
+      el('label', { class: 'checkbox' }, [
+        el('input', { type: 'checkbox', 'data-f': 'quietEnabled', ...(s.quietEnabled ? { checked: 'checked' } : {}) }),
+        ' Тихие часы с ',
+        time('quietFrom', s.quietFrom, 'Начало тихих часов'),
+        ' до ',
+        time('quietTo', s.quietTo, 'Конец тихих часов'),
+      ]),
+      el('p', { class: 'field__hint', text: 'Время московское. Обычное найденное придёт одним сообщением после них.' }),
+    ]),
+    inline('Присылать, если подтверждённых пунктов не меньше', num('minMatches', s.minMatches, 1, 50)),
+    inline('Не больше алертов в день (громкие не ограничиваются)', num('maxPerDay', s.maxPerDay, 1, 100)),
+  ]);
+}
+
+function readTopicSettings(body, topicId) {
+  const f = (name) => body.querySelector(`[data-f="${name}"]`);
+  const checkedValues = (kind) => [...body.querySelectorAll(`input[data-kind="${kind}"]:checked`)].map((i) => i.value);
   return {
-    enabled: byId('alertsEnabled').checked,
-    scope: checked('alertScope'),
-    groupIds: [...byId('alertGroups').querySelectorAll('input:checked')].map((i) => Number(i.value)),
-    intervalMinutes: Number(byId('alertInterval').value),
-    mode: checked('alertMode'),
-    digestTime: byId('alertDigestTime').value,
-    quietEnabled: byId('alertQuiet').checked,
-    quietFrom: byId('alertQuietFrom').value,
-    quietTo: byId('alertQuietTo').value,
-    minMatches: Number(byId('alertMinMatches').value),
-    maxPerDay: Number(byId('alertMaxPerDay').value),
+    scope: body.querySelector(`input[name="scope-${topicId}"]:checked`).value,
+    groupIds: checkedValues('group').map(Number),
+    channels: checkedValues('channel'),
+    intervalMinutes: Number(f('intervalMinutes').value),
+    digestHours: Number(f('digestHours').value),
+    loudFrom: f('loudFrom').value,
+    quietEnabled: f('quietEnabled').checked,
+    quietFrom: f('quietFrom').value,
+    quietTo: f('quietTo').value,
+    minMatches: Number(f('minMatches').value),
+    maxPerDay: Number(f('maxPerDay').value),
   };
 }
 
-// Автосохранение: любое изменение настроек (кроме тем — у них свои запросы)
-// уходит на сервер через 400 мс; сервер нормализует значения, форма их
-// перерисовывает, так что вне допустимого диапазона ничего не «залипает».
-byId('tab-alerts').addEventListener('change', (e) => {
-  if (e.target.closest('#topicsList') || e.target.id === 'alertTopicInput') return;
-  byId('alertGroups').hidden = readAlertSettings().scope !== 'groups';
-  byId('alertsStatus').textContent = '';
-  clearTimeout(alertsSaveTimer);
-  alertsSaveTimer = setTimeout(async () => {
-    try {
-      alertSettings = await api('/api/alerts/settings', { method: 'PUT', body: JSON.stringify(readAlertSettings()) });
-      renderAlertSettings();
-      byId('alertsStatus').textContent = 'Сохранено';
-    } catch (error) {
-      byId('alertsStatus').textContent = `Не сохранилось: ${error.message}`;
-    }
-  }, 400);
-});
+function syncScopeBoxes(body, scope) {
+  body.querySelector('[data-box="groups"]').hidden = scope !== 'groups';
+  body.querySelector('[data-box="channels"]').hidden = scope !== 'channels';
+}
+
+function renderTopicCard(topic) {
+  const body = topicSettingsForm(topic);
+  syncScopeBoxes(body, topic.settings.scope);
+  const meta = el('span', { class: 'topic-card__meta', text: topicSummary(topic.settings) });
+  const status = el('span', { class: 'actions__status', role: 'status' });
+  const toggle = el('button', { class: 'btn btn--ghost', type: 'button', 'aria-expanded': 'false' }, 'Настройки');
+  toggle.addEventListener('click', () => {
+    body.hidden = !body.hidden;
+    toggle.setAttribute('aria-expanded', String(!body.hidden));
+  });
+
+  // Автосохранение: изменения уходят через 400 мс; сервер нормализует значения,
+  // числа возвращаем в форму, чтобы вне диапазона ничего не «залипало».
+  let saveTimer = null;
+  body.addEventListener('change', () => {
+    const settings = readTopicSettings(body, topic.id);
+    syncScopeBoxes(body, settings.scope);
+    status.textContent = '';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        const saved = await api(`/api/alerts/topics/${topic.id}`, { method: 'PATCH', body: JSON.stringify({ settings }) });
+        meta.textContent = topicSummary(saved.settings);
+        body.querySelector('[data-f="minMatches"]').value = saved.settings.minMatches;
+        body.querySelector('[data-f="maxPerDay"]').value = saved.settings.maxPerDay;
+        status.textContent = 'Сохранено';
+      } catch (error) {
+        status.textContent = `Не сохранилось: ${error.message}`;
+      }
+    }, 400);
+  });
+
+  return el('li', { class: 'topic-card' + (topic.isActive ? '' : ' is-off') }, [
+    el('div', { class: 'topic' }, [
+      el('label', { class: 'checkbox' }, [
+        el('input', {
+          type: 'checkbox',
+          'aria-label': `Тема «${topic.label}» включена`,
+          ...(topic.isActive ? { checked: 'checked' } : {}),
+          onchange: (e) =>
+            mutateTopics(() => api(`/api/alerts/topics/${topic.id}`, { method: 'PATCH', body: JSON.stringify({ isActive: e.target.checked }) })),
+        }),
+        el('span', {}, [` ${topic.label}`, el('br'), meta]),
+      ]),
+      el('div', { class: 'topic-card__actions' }, [
+        toggle,
+        confirmButton('Удалить', () => mutateTopics(() => api(`/api/alerts/topics/${topic.id}`, { method: 'DELETE' }))),
+      ]),
+    ]),
+    body,
+    status,
+  ]);
+}
 
 function renderTopics(topics) {
   const list = byId('topicsList');
@@ -750,25 +881,7 @@ function renderTopics(topics) {
   if (topics.length === 0) {
     list.appendChild(el('li', { class: 'topic topic--empty', text: 'Тем пока нет' }));
   }
-  for (const topic of topics) {
-    list.appendChild(
-      el('li', { class: 'topic' + (topic.isActive ? '' : ' is-off') }, [
-        el('label', { class: 'checkbox' }, [
-          el('input', {
-            type: 'checkbox',
-            'aria-label': `Искать по теме «${topic.label}»`,
-            ...(topic.isActive ? { checked: 'checked' } : {}),
-            onchange: (e) =>
-              mutateTopics(() =>
-                api(`/api/alerts/topics/${topic.id}`, { method: 'PATCH', body: JSON.stringify({ isActive: e.target.checked }) })
-              ),
-          }),
-          ` ${topic.label}`,
-        ]),
-        confirmButton('Удалить', () => mutateTopics(() => api(`/api/alerts/topics/${topic.id}`, { method: 'DELETE' }))),
-      ])
-    );
-  }
+  for (const topic of topics) list.appendChild(renderTopicCard(topic));
 }
 
 async function mutateTopics(action) {
@@ -796,6 +909,8 @@ byId('alertTopicInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addAlertTopic();
 });
 
+// ---------- превью: что пришло бы сейчас ----------
+
 byId('previewAlertsBtn').addEventListener('click', async (e) => {
   const button = e.currentTarget;
   const out = byId('alertsPreview');
@@ -814,23 +929,31 @@ byId('previewAlertsBtn').addEventListener('click', async (e) => {
   }
 });
 
+const URGENCY_MARK = { urgent: '🔴', important: '🟠', normal: '•' };
+
 function renderAlertPreview(r) {
-  const items = r.result ? r.result.items : [];
+  const items = r.items || [];
+  const rejected = r.rejected ? ` · выкинуто проверкой: ${r.rejected}` : '';
   const status = r.error
     ? `Ошибка: ${r.error}`
     : r.wouldSend
-      ? `Пришёл бы алерт · постов: ${items.length}`
-      : `Не пришёл бы · постов: ${items.length}, нужно от ${alertSettings.minMatches}`;
+      ? `Пришёл бы алерт · пунктов: ${items.length}${rejected}`
+      : `Не пришёл бы · подтверждённых пунктов: ${items.length}, постов в окне: ${r.postsInWindow}${rejected}`;
   return el('div', { class: 'preview' }, [
     el('div', { class: 'preview__head' }, [
       el('span', { class: 'preview__topic', text: r.topic }),
       el('span', { class: 'preview__status' + (r.wouldSend ? ' is-yes' : ''), text: status }),
     ]),
-    items.length && r.result.summary ? el('p', { class: 'preview__summary', text: r.result.summary }) : null,
-    ...items.slice(0, 5).map((item) =>
-      el('a', { class: 'preview__item', href: item.link, target: '_blank', rel: 'noopener' }, [
-        el('span', { class: 'preview__channel', text: `${item.channelTitle || item.channel} · ${item.postedAtFormatted}` }),
-        el('span', { text: item.gist }),
+    ...items.map((item) =>
+      el('div', { class: 'preview__item' }, [
+        el('span', { text: `${URGENCY_MARK[item.urgency] || '•'} ${item.text}` }),
+        el(
+          'span',
+          { class: 'preview__channel' },
+          item.sources.slice(0, 5).map((s) =>
+            el('a', { class: 'preview__link', href: s.link, target: '_blank', rel: 'noopener' }, `${s.channelTitle || s.channel} · ${formatMsk(s.postedAt)}`)
+          )
+        ),
       ])
     ),
   ]);

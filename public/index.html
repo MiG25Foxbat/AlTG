@@ -181,11 +181,12 @@
     <section id="tab-alerts" class="tab">
       <div class="setting-row">
         <div>
-          <div class="setting-row__title">Автоматические алерты</div>
-          <p class="field__hint">Сервис сам проверяет каналы по вашим темам и присылает найденное. Доставку подключим позже — пока можно всё настроить и посмотреть, что пришло бы сейчас.</p>
+          <div class="setting-row__title">Telegram-бот</div>
+          <p id="botStatus" class="field__hint">Проверяю…</p>
         </div>
-        <label class="switch"><input id="alertsEnabled" type="checkbox" aria-label="Автоматические алерты" /><span class="switch__track"></span></label>
+        <button id="botLinkBtn" class="btn btn--secondary" type="button" hidden>Получать алерты</button>
       </div>
+      <p id="botLinkHint" class="field__hint field__hint--list" hidden></p>
 
       <div class="field">
         <label class="field__label" for="alertTopicInput">Темы</label>
@@ -195,51 +196,15 @@
             placeholder="Например: ставка ЦБ, листинг на Binance" autocomplete="off" />
           <button id="addTopicBtn" class="btn btn--secondary" type="button">Добавить</button>
         </div>
-        <p class="field__hint">Алерт приходит, если в постах есть что-то по любой из отмеченных тем.</p>
+        <p class="field__hint">У каждой темы свои настройки: где искать, как часто проверять, когда и как присылать — кнопка «Настройки» у темы.</p>
         <div id="topicError" class="field__error" hidden></div>
-      </div>
-
-      <div class="field">
-        <span class="field__label">Где искать</span>
-        <label class="radio"><input type="radio" name="alertScope" value="all" /> Во всех отслеживаемых каналах</label>
-        <label class="radio"><input type="radio" name="alertScope" value="groups" /> Только в выбранных группах</label>
-        <div id="alertGroups" class="checks" hidden></div>
-      </div>
-
-      <div class="field field--inline">
-        <label class="field__label" for="alertInterval">Проверять</label>
-        <select id="alertInterval" class="select"></select>
-      </div>
-
-      <div class="field">
-        <span class="field__label">Как присылать</span>
-        <label class="radio"><input type="radio" name="alertMode" value="instant" /> Сразу, как только что-то нашлось</label>
-        <label class="radio"><input type="radio" name="alertMode" value="digest" /> Одной сводкой в день, в
-          <input id="alertDigestTime" class="text-input text-input--time" type="time" aria-label="Время сводки" /></label>
-      </div>
-
-      <div class="field">
-        <label class="checkbox"><input id="alertQuiet" type="checkbox" /> Не беспокоить с
-          <input id="alertQuietFrom" class="text-input text-input--time" type="time" aria-label="Начало тихих часов" /> до
-          <input id="alertQuietTo" class="text-input text-input--time" type="time" aria-label="Конец тихих часов" /></label>
-        <p class="field__hint">Время московское. Найденное в тихие часы придёт после них.</p>
-      </div>
-
-      <div class="field field--inline">
-        <label class="field__label" for="alertMinMatches">Присылать, если найдено постов не меньше</label>
-        <input id="alertMinMatches" class="text-input text-input--num" type="number" min="1" max="50" />
-      </div>
-
-      <div class="field field--inline">
-        <label class="field__label" for="alertMaxPerDay">Не больше алертов в день</label>
-        <input id="alertMaxPerDay" class="text-input text-input--num" type="number" min="1" max="100" />
       </div>
 
       <div class="actions">
         <button id="previewAlertsBtn" class="btn btn--secondary" type="button">Проверить сейчас</button>
         <span id="alertsStatus" class="actions__status" role="status"></span>
       </div>
-      <p class="field__hint">Настройки сохраняются сами. «Проверить сейчас» ищет по темам за выбранный интервал и показывает, пришёл бы алерт или нет.</p>
+      <p class="field__hint">Ищет по каждой включённой теме за её интервал и показывает, что пришло бы в Telegram. Ничего не отправляет.</p>
       <div id="alertsError" class="banner banner--error" hidden></div>
       <div id="alertsPreview"></div>
     </section>
