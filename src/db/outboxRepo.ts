@@ -1,3 +1,4 @@
+import type { InStatement } from '@libsql/client';
 import { getDb } from './database';
 import { Destination } from './destinationsRepo';
 import { InlineKeyboard, OutgoingPart } from '../modules/AlertModule/messageFormat';
@@ -16,7 +17,20 @@ export interface DueMessage {
   replyMarkup: InlineKeyboard | null;
 }
 
-/** Части одного алерта — подряд, в порядке частей (отправщик берёт по id). */
+/** Части одного алерта — подряд, в порядке частей (отправщик берёт по id). Для batch вместе с другими записями. */
+export function enqueueStatements(
+  destinationId: number,
+  parts: OutgoingPart[],
+  disableNotification: boolean,
+  now: number
+): InStatement[] {
+  return parts.map((p) => ({
+    sql: `INSERT INTO outbox (destination_id, text_html, disable_notification, reply_markup_json, next_attempt_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [destinationId, p.text, disableNotification ? 1 : 0, p.replyMarkup ? JSON.stringify(p.replyMarkup) : null, now, now],
+  }));
+}
+
 export async function enqueueParts(
   destinationId: number,
   parts: OutgoingPart[],
@@ -25,14 +39,7 @@ export async function enqueueParts(
 ): Promise<void> {
   if (parts.length === 0) return;
   const db = await getDb();
-  await db.batch(
-    parts.map((p) => ({
-      sql: `INSERT INTO outbox (destination_id, text_html, disable_notification, reply_markup_json, next_attempt_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [destinationId, p.text, disableNotification ? 1 : 0, p.replyMarkup ? JSON.stringify(p.replyMarkup) : null, now, now],
-    })),
-    'write'
-  );
+  await db.batch(enqueueStatements(destinationId, parts, disableNotification, now), 'write');
 }
 
 /** Упали посреди отправки — через stuckBefore вернуть в очередь (может уйти повторно, см. handoff). */

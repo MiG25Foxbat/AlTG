@@ -50,7 +50,7 @@ test('больше 5 источников — 5 ссылок и «и ещё N»'
 
 test('длинный отчёт режется на части по пунктам: каждая ≤ 4096, пункты целиком и по порядку, кнопки только под последней', () => {
   const items = Array.from({ length: 12 }, (_, i) => item(`Пункт ${i} ` + 'x'.repeat(900)));
-  const parts = buildAlertMessages({ ...base, items, reconnectUrl: 'https://app.example/?tab=telegram' });
+  const parts = buildAlertMessages({ ...base, items, privateChannelsPaused: true, siteUrl: 'https://app.example' });
   assert.ok(parts.length > 1);
   for (const p of parts) assert.ok(p.text.length <= TELEGRAM_TEXT_LIMIT, `часть длиной ${p.text.length}`);
 

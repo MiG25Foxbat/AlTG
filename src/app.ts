@@ -10,7 +10,8 @@ import {
   countMonitoredChannels,
 } from './db/channelsRepo';
 import { listGroups, createGroup, updateGroup, deleteGroup, setChannelGroup, normalizeGroupName } from './db/groupsRepo';
-import { listTopics, addTopic, updateTopic, deleteTopic, resolveTopicChannels } from './db/alertsRepo';
+import { listTopics, addTopic, updateTopic, deleteTopic } from './db/alertsRepo';
+import { previewAlerts } from './modules/AlertModule/scheduler';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
 import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
 import { createLinkToken, getLinkByUser } from './db/destinationsRepo';
@@ -381,31 +382,13 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
   });
 
   /**
-   * «Что пришло бы сейчас»: поиск по каждой активной подписке за окно = её
-   * интервал, с её областью каналов и порогом minMatches. Ничего не отправляет.
-   * ponytail: последовательно по темам, каждая фетчит сама; на общий конвейер
-   * планировщика (один fetch на пользователя) переводится на этапе 6.
+   * «Что пришло бы сейчас»: тот же конвейер, что у планировщика (один fetch,
+   * LLM на подписку, проверка пунктов, готовое сообщение), но всухую.
    */
   app.post('/api/alerts/preview', requireAuth, async (req: AuthedRequest, res: Response) => {
-    const userId = req.userId!;
-    const activeTopics = (await listTopics(userId)).filter((t) => t.isActive);
-    if (activeTopics.length === 0) {
+    const results = await previewAlerts({ userBot }, req.userId!, Math.floor(Date.now() / 1000));
+    if (results.length === 0) {
       return res.status(400).json({ error: 'Добавьте хотя бы одну активную тему' });
-    }
-
-    const results = [];
-    for (const topic of activeTopics) {
-      try {
-        const onlyChannels = await resolveTopicChannels(userId, topic.settings);
-        if (onlyChannels && onlyChannels.size === 0) {
-          results.push({ topic: topic.label, wouldSend: false, error: 'В выбранных группах/каналах нет каналов' });
-          continue;
-        }
-        const result = await analyzeTopic(userBot, userId, topic.label, topic.settings.intervalMinutes, onlyChannels);
-        results.push({ topic: topic.label, wouldSend: result.items.length >= topic.settings.minMatches, result });
-      } catch (error: any) {
-        results.push({ topic: topic.label, wouldSend: false, error: error?.message || 'Ошибка анализа' });
-      }
     }
     res.json({ results });
   });

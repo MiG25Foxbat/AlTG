@@ -4,6 +4,7 @@ import { withPersonalClient } from '../UserBotModule/personalAccount';
 import { listActiveChannelUsernames, listActivePrivateChannelIds } from '../../db/channelsRepo';
 import { insertPosts } from '../../db/postsRepo';
 import { insertPrivatePosts } from '../../db/privatePostsRepo';
+import { getSessionStatus, markNeedsReauth } from '../../db/telegramAccountsRepo';
 import { logger } from '../../utils/logger';
 
 const PRIVATE_PAGE_SIZE = 100;
@@ -72,6 +73,17 @@ export async function fetchRecentPosts(
 }
 
 /**
+ * Telegram больше не принимает эту сессию — нужна повторная авторизация,
+ * повторять запросы бессмысленно (а при AUTH_KEY_DUPLICATED — вредно).
+ */
+export function isSessionRevokedError(error: any): boolean {
+  const code = String(error?.errorMessage || error?.message || '');
+  return /AUTH_KEY_UNREGISTERED|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|AUTH_KEY_DUPLICATED/.test(code);
+}
+
+const REAUTH_ERROR = 'Личный Telegram-аккаунт отключился — переподключите его на сайте';
+
+/**
  * То же самое для приватных каналов, но через ЛИЧНЫЙ Telegram-клиент
  * пользователя (только он состоит в этих каналах — общий системный бот
  * не может их прочитать) и с записью в private_posts, а не в общий кэш.
@@ -84,10 +96,19 @@ export async function fetchRecentPrivatePosts(
 ): Promise<ChannelFetchResult[]> {
   const channelIds = await listActivePrivateChannelIds(userId);
   if (channelIds.length === 0) return [];
+  // Сессия уже отвергнута — не стучимся, пока пользователь не переподключит аккаунт.
+  if ((await getSessionStatus(userId)) === 'needs_reauth') {
+    return channelIds.map((channel) => ({ channel, fetchedCount: 0, newCount: 0, error: REAUTH_ERROR }));
+  }
 
+  let sessionRevoked = false;
   const results = await withPersonalClient(userId, async (client) => {
     const perChannel: ChannelFetchResult[] = [];
     for (const channelId of channelIds) {
+      if (sessionRevoked) {
+        perChannel.push({ channel: channelId, fetchedCount: 0, newCount: 0, error: REAUTH_ERROR });
+        continue;
+      }
       try {
         const messages = await collectMessagesInWindow(
           async (offsetId) => {
@@ -107,11 +128,26 @@ export async function fetchRecentPrivatePosts(
         perChannel.push({ channel: channelId, fetchedCount: messages.length, newCount });
       } catch (error: any) {
         logger.error(`Ошибка при получении постов из приватного канала ${channelId}:`, error);
-        perChannel.push({ channel: channelId, fetchedCount: 0, newCount: 0, error: describeTelegramError(error) });
+        sessionRevoked = isSessionRevokedError(error);
+        perChannel.push({
+          channel: channelId,
+          fetchedCount: 0,
+          newCount: 0,
+          error: sessionRevoked ? REAUTH_ERROR : describeTelegramError(error),
+        });
       }
     }
     return perChannel;
+  }).catch((error) => {
+    // Сессию могут отвергнуть уже на подключении — тогда все каналы разом.
+    if (!isSessionRevokedError(error)) throw error;
+    sessionRevoked = true;
+    return channelIds.map((channel) => ({ channel, fetchedCount: 0, newCount: 0, error: REAUTH_ERROR }));
   });
 
+  if (sessionRevoked) {
+    logger.warn(`Личная сессия пользователя #${userId} отвергнута Telegram — приватные каналы на паузе до переподключения`);
+    await markNeedsReauth(userId);
+  }
   return results ?? [];
 }

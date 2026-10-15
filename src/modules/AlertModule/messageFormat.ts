@@ -32,8 +32,10 @@ export interface AlertMessageInput {
   items: MessageItem[];
   /** unix-секунды, время в шапке */
   now: number;
-  /** Если задан — внизу пометка «приватные каналы не проверяются» со ссылкой на переподключение */
-  reconnectUrl?: string | null;
+  /** Личная сессия отвалилась, а в подписке есть приватные каналы — пометка внизу */
+  privateChannelsPaused?: boolean;
+  /** Сайт — для ссылки «переподключите аккаунт» */
+  siteUrl?: string | null;
 }
 
 export interface InlineKeyboard {
@@ -102,9 +104,8 @@ function formatItem(item: MessageItem): string {
 export function buildAlertMessages(input: AlertMessageInput): OutgoingPart[] {
   const header = `🔔 <b>${escapeHtml(input.topicLabel)}</b>\n<i>${formatMoscowTime(input.now)} МСК</i>`;
   const contHeader = `🔔 <b>${escapeHtml(input.topicLabel)}</b> <i>(продолжение)</i>`;
-  const footer = input.reconnectUrl
-    ? `⚠️ Приватные каналы сейчас не проверяются — <a href="${escapeHtml(input.reconnectUrl)}">переподключите аккаунт</a>`
-    : '';
+  const reconnect = input.siteUrl ? `<a href="${escapeHtml(input.siteUrl)}">переподключите аккаунт</a>` : 'переподключите аккаунт на сайте';
+  const footer = input.privateChannelsPaused ? `⚠️ Приватные каналы сейчас не проверяются — ${reconnect}` : '';
 
   const blocks = [...input.items.map(formatItem), ...(footer ? [footer] : [])];
   const texts: string[] = [];

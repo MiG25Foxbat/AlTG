@@ -85,14 +85,14 @@ export interface TopicDto {
   settings: TopicSettings;
 }
 
-interface TopicRow {
+export interface TopicRow {
   id: number;
   label: string;
   is_active: number;
   settings_json: string | null;
 }
 
-function toDto(r: TopicRow): TopicDto {
+export function topicFromRow(r: TopicRow): TopicDto {
   return {
     id: r.id,
     label: r.label,
@@ -114,7 +114,7 @@ export async function listTopics(userId: number): Promise<TopicDto[]> {
     sql: 'SELECT id, label, is_active, settings_json FROM topics WHERE user_id = ? ORDER BY created_at, id',
     args: [userId],
   });
-  return (result.rows as unknown as TopicRow[]).map(toDto);
+  return (result.rows as unknown as TopicRow[]).map(topicFromRow);
 }
 
 export async function getTopic(userId: number, topicId: number): Promise<TopicDto | undefined> {
@@ -124,7 +124,7 @@ export async function getTopic(userId: number, topicId: number): Promise<TopicDt
     args: [topicId, userId],
   });
   const row = result.rows[0] as unknown as TopicRow | undefined;
-  return row ? toDto(row) : undefined;
+  return row ? topicFromRow(row) : undefined;
 }
 
 export async function addTopic(userId: number, rawLabel: unknown, rawSettings?: unknown): Promise<TopicDto> {

@@ -224,6 +224,11 @@ async function initDb(): Promise<Client> {
   await ensureColumn(db, 'topics', 'settings_json', 'TEXT');
   // NULL = личный чат пользователя с ботом; группа компании — явная ссылка.
   await ensureColumn(db, 'topics', 'destination_id', 'INTEGER REFERENCES alert_destinations(id) ON DELETE SET NULL');
+  // До какого момента посты подписки уже разобраны — двигается только при успешной проверке
+  // (last_run_at — любая попытка, по нему считается расписание).
+  await ensureColumn(db, 'topics', 'checked_until', 'INTEGER');
+  // Когда отчёт ушёл в очередь; один выпуск = одно сообщение, по ним считается дневной лимит.
+  await ensureColumn(db, 'alert_reports', 'released_at', 'INTEGER');
   await ensureColumn(db, 'telegram_accounts', 'reauth_notified_at', 'INTEGER');
   await migrateAlertSettingsToTopics(db);
   // Единственное место, где определено «канал реально мониторится»: включён

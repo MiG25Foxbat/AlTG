@@ -9,7 +9,7 @@ import { windowMinutesToCutoff, formatMoscowTime } from '../../utils/time';
 import { logger } from '../../utils/logger';
 
 const POSTS_FETCHED_FROM_DB_CAP = 2000;
-const MAX_POSTS_SENT_TO_LLM = 300;
+export const MAX_POSTS_SENT_TO_LLM = 300;
 
 export interface ResultItem {
   channel: string;
@@ -23,7 +23,7 @@ export interface ResultItem {
 }
 
 /** Общая для public_posts/private_posts форма — дальше по пайплайну (фильтр, ИИ) им всё равно, откуда пост. */
-interface UnifiedPost {
+export interface UnifiedPost {
   channel: string;
   isPrivate: boolean;
   messageId: number;
@@ -44,7 +44,7 @@ export interface AnalyzeResult {
   tookMs: number;
 }
 
-function toLink(channel: string, messageId: number, isPrivate: boolean): string {
+export function toLink(channel: string, messageId: number, isPrivate: boolean): string {
   if (isPrivate) {
     // Deep-link на пост в канале без публичного @username — рабочий формат
     // Telegram (t.me/c/<id>/<msg>) только для тех, кто уже состоит в канале,
@@ -53,6 +53,30 @@ function toLink(channel: string, messageId: number, isPrivate: boolean): string 
     return `https://t.me/c/${bareId}/${messageId}`;
   }
   return `https://t.me/${channel.replace(/^@/, '')}/${messageId}`;
+}
+
+/**
+ * Уже сохранённые посты отслеживаемых каналов пользователя не старше cutoff,
+ * публичные и приватные вместе, свежие первыми. includePrivate=false —
+ * личная сессия отвалилась, приватные каналы на паузе.
+ */
+export async function loadUnifiedPosts(
+  userId: number,
+  cutoff: number,
+  onlyChannels?: Set<string>,
+  includePrivate = true
+): Promise<UnifiedPost[]> {
+  const [publicPosts, privatePosts] = await Promise.all([
+    getPostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP),
+    includePrivate ? getPrivatePostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP) : [],
+  ]);
+  return [
+    ...publicPosts.map((p) => ({ channel: p.channel_username, isPrivate: false, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
+    ...privatePosts.map((p) => ({ channel: p.channel_identifier, isPrivate: true, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
+  ]
+    .filter((p) => !onlyChannels || onlyChannels.has(p.channel))
+    .sort((a, b) => b.postedAt - a.postedAt)
+    .slice(0, POSTS_FETCHED_FROM_DB_CAP);
 }
 
 export async function analyzeTopic(
@@ -74,17 +98,7 @@ export async function analyzeTopic(
     .filter((r) => r.error)
     .map((r) => ({ channel: r.channel, error: r.error! }));
 
-  const [publicPosts, privatePosts] = await Promise.all([
-    getPostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP),
-    getPrivatePostsSince(userId, cutoff, POSTS_FETCHED_FROM_DB_CAP),
-  ]);
-  const posts: UnifiedPost[] = [
-    ...publicPosts.map((p) => ({ channel: p.channel_username, isPrivate: false, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
-    ...privatePosts.map((p) => ({ channel: p.channel_identifier, isPrivate: true, messageId: p.message_id, text: p.text, postedAt: p.posted_at })),
-  ]
-    .filter((p) => !onlyChannels || onlyChannels.has(p.channel))
-    .sort((a, b) => b.postedAt - a.postedAt)
-    .slice(0, POSTS_FETCHED_FROM_DB_CAP);
+  const posts = await loadUnifiedPosts(userId, cutoff, onlyChannels);
 
   const baseResult = {
     windowMinutes,
