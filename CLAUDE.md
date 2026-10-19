@@ -39,7 +39,8 @@ Telegram Mini App (это в планах, не реализовано). С ре
 - Только публичные каналы через MTProto (GramJS), нет RSS-гибрида
 - Двухступенчатый фильтр (keyword → фолбэк на полный ИИ-анализ корпуса),
   а не трёхслойный (keyword → эмбеддинги → LLM)
-- Одна модель — Gemini 3.1 Flash-Lite, а не Groq+Gemini комбинация
+- Одна основная модель — Mistral (`mistral-medium-latest`) с резервом Groq
+  (`openai/gpt-oss-120b`), а не продуманная мульти-провайдерная схема
 - Render, а не Railway
 - Ручной `SESSION_STRING` через `.env`, а не magic-link реавторизация
 
@@ -61,9 +62,12 @@ Telegram Mini App (это в планах, не реализовано). С ре
   для прода; `telegram` (GramJS) заменён на `teleproto` (GramJS
   заархивирован, см. раздел "Известные грабли")
 - Telegram: `teleproto` (GramJS форк), MTProto-юзербот, не Bot API
-- ИИ: Gemini REST API напрямую через `fetch` (без SDK) — весь код вызова
-  ИИ изолирован в `src/modules/AiModule/geminiClient.ts`, чтобы смена
-  провайдера (Groq, GigaChat) была правкой одного файла
+- ИИ: цепочка OpenAI-совместимых API через голый `fetch` (без SDK) —
+  Mistral первым, Groq резервом; весь код вызова ИИ — в
+  `src/modules/AiModule/llmClient.ts` (очередь Mistral ≤ 1 запрос/с —
+  `MISTRAL_MIN_INTERVAL_MS`; 429 → retry-after или 2/4/8 с, три повтора;
+  таймаут 30 с и прочие ошибки → тот же запрос в Groq). Gemini убран: не
+  отвечал с российских IP даже через VPN
 - Frontend: чистый HTML/CSS/JS без фреймворка, `public/`
 - Бот алертов: `grammy` (Bot API), режим `BOT_MODE` = `webhook` | `polling`;
   отправка алертов — своя очередь `outbox` + `TelegramNotifier` (голый fetch)
@@ -76,7 +80,7 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 123 теста
+npm test             # node:test, 133 теста
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register
@@ -114,7 +118,7 @@ src/
     FetchModule/fetchService.ts     # оркестрация: каналы → UserBot → БД
     FilterModule/keywordFilter.ts   # подстрочный keyword-фильтр (первая ступень)
     AiModule/
-      geminiClient.ts        # единственное место с HTTP-вызовами к Gemini (поиск + отчёт алерта)
+      llmClient.ts           # единственное место с HTTP-вызовами к ИИ: Mistral → Groq (поиск + отчёт алерта)
       analyzeService.ts       # вторая ступень: релевантность + саммари; loadUnifiedPosts()
       reportValidator.ts      # проверка пунктов алерта: источники, дословная цитата, числа
     AlertModule/
@@ -251,7 +255,7 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 ## Правила безопасности с credentials — соблюдать всегда
 
 `SESSION_STRING` — это фактически полный доступ к Telegram-аккаунту,
-`GEMINI_API_KEY` — платёжный доступ к API, `SESSION_ENCRYPTION_KEY` —
+`MISTRAL_API_KEY` / `GROQ_API_KEY` — платёжный доступ к API ИИ, `SESSION_ENCRYPTION_KEY` —
 ключ шифрования для конфиденциальных полей в БД. Все три:
 
 - живут только в `.env` (в `.gitignore`) или в переменных окружения
@@ -266,8 +270,9 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 
 Задеплоено на **Render** (бесплатный тариф) — не Railway, как
 предполагалось в целевой архитектуре. Причина именно Render: Gemini API
-не отвечает на запросы с российских IP, а Render даёт сервер за пределами
-РФ. Пользователь подтвердил: деплой работает, все функции протестированы
+не отвечал на запросы с российских IP, а Render даёт сервер за пределами
+РФ (сейчас ИИ — Mistral/Groq; их ключи на Render вписываются в Environment
+отдельно, локальный `.env` он не видит). Пользователь подтвердил: деплой работает, все функции протестированы
 на проде.
 
 Особенности free-тарифа Render, которые нужно держать в голове при любых
@@ -319,7 +324,7 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 ## Тестовая стратегия проекта
 
 Тесты специально спроектированы так, чтобы не требовать реального
-Telegram-аккаунта или реального Gemini-ключа:
+Telegram-аккаунта или реального ключа ИИ:
 
 - `IUserBotReader` — минимальный интерфейс, под который подставляется
   фейковый клиент в тестах вместо GramJS
@@ -327,7 +332,7 @@ Telegram-аккаунта или реального Gemini-ключа:
   тестируемости постраничной логики через инжектируемый фейковый
   page-fetcher
 - Приоритет при добавлении новой логики — стараться держать её в чистых
-  функциях с DI, а не в коде, завязанном напрямую на GramJS/Gemini/сеть,
+  функциях с DI, а не в коде, завязанном напрямую на GramJS/ИИ/сеть,
   чтобы новую логику можно было так же покрыть тестами без реальных
   внешних вызовов
 
@@ -337,8 +342,7 @@ Telegram-аккаунта или реального Gemini-ключа:
   (`/connect`, `message_thread_id`), почта — заложены в схеме, не сделаны
 - Семантический слой дедупликации/эмбеддингов (шаг к целевому
   трёхслойному пайплайну)
-- Мульти-провайдерный адаптер под LLM (Groq, GigaChat) поверх уже
-  изолированного `geminiClient.ts`
+- Расширение цепочки LLM (GigaChat и др.) поверх `llmClient.ts`
 - Миграция интерфейса в Telegram Mini App
 - Приватные каналы через MTProto (сейчас — только публичные)
 

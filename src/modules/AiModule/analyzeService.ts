@@ -4,7 +4,7 @@ import { getPostsSince } from '../../db/postsRepo';
 import { getPrivatePostsSince } from '../../db/privatePostsRepo';
 import { listChannels } from '../../db/channelsRepo';
 import { extractKeywords, keywordPreFilter } from '../FilterModule/keywordFilter';
-import { summarizeWithGemini } from './geminiClient';
+import { summarizePosts } from './llmClient';
 import { windowMinutesToCutoff, formatMoscowTime } from '../../utils/time';
 import { logger } from '../../utils/logger';
 
@@ -129,7 +129,7 @@ export async function analyzeTopic(
       `отправляется в ИИ ${candidates.length}${usedKeywordFallback ? ' (fallback — ключевые слова ничего не нашли)' : ''}`
   );
 
-  const aiResult = await summarizeWithGemini(
+  const aiResult = await summarizePosts(
     topic,
     candidates.map((post, index) => ({ index, text: post.text }))
   );

@@ -1,6 +1,6 @@
 import { UnifiedPost, toLink, MAX_POSTS_SENT_TO_LLM } from '../AiModule/analyzeService';
 import { extractKeywords, keywordPreFilter } from '../FilterModule/keywordFilter';
-import { generateAlertReport } from '../AiModule/geminiClient';
+import { generateAlertReport } from '../AiModule/llmClient';
 import { validateReportItems, ValidItem, RejectedItem } from '../AiModule/reportValidator';
 import { MessageItem } from './messageFormat';
 

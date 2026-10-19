@@ -27,7 +27,7 @@ import {
   listPrivateDialogs,
 } from './modules/UserBotModule/personalAccount';
 import { analyzeTopic } from './modules/AiModule/analyzeService';
-import { GeminiConfigError, GeminiQuotaError } from './modules/AiModule/geminiClient';
+import { LlmConfigError, LlmQuotaError } from './modules/AiModule/llmClient';
 import { InvalidTimeWindowError, TIME_WINDOW_OPTIONS } from './utils/time';
 import { IUserBotReader } from './modules/UserBotModule/IUserBotReader';
 import { logger } from './utils/logger';
@@ -424,10 +424,10 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
     if (err instanceof InvalidTimeWindowError) {
       return res.status(400).json({ error: err.message });
     }
-    if (err instanceof GeminiConfigError) {
+    if (err instanceof LlmConfigError) {
       return res.status(500).json({ error: err.message });
     }
-    if (err instanceof GeminiQuotaError) {
+    if (err instanceof LlmQuotaError) {
       return res.status(429).json({ error: err.message });
     }
     logger.error('Необработанная ошибка API:', err);

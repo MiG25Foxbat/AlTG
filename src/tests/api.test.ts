@@ -2,14 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Полностью в памяти — не трогает реальный data/app.db и не требует
-// живого подключения к Telegram или ключа Gemini. database.ts читает
+// живого подключения к Telegram или ключа ИИ. database.ts читает
 // DB_PATH лениво (внутри getDb()), поэтому достаточно выставить его
 // до первого фактического обращения к базе — не обязательно до импортов.
 import { randomBytes } from 'node:crypto';
 
 process.env.DB_PATH = ':memory:';
 process.env.SESSION_ENCRYPTION_KEY = randomBytes(32).toString('base64');
-delete process.env.GEMINI_API_KEY;
+delete process.env.MISTRAL_API_KEY;
+delete process.env.GROQ_API_KEY;
 
 import { createApp } from '../app';
 import { closeDb } from '../db/database';
@@ -154,7 +155,7 @@ test('HTTP API: полный сценарий работы с каналами �
   });
 
   await t.test(
-    'анализ с активным каналом доходит до вызова Gemini и падает именно на отсутствии ключа',
+    'анализ с активным каналом доходит до вызова ИИ и падает именно на отсутствии ключа',
     async () => {
       fakeUserBot.messagesToReturn = [
         { id: 1, text: 'Курс доллара вырос на 2%', date: Math.floor(Date.now() / 1000) - 60 },
@@ -165,9 +166,9 @@ test('HTTP API: полный сценарий работы с каналами �
         body: JSON.stringify({ topic: 'курс доллара', windowMinutes: 60 }),
       });
       // Дошли до реального вызова ИИ (посты получены, сохранены, отфильтрованы) —
-      // упало именно на отсутствии GEMINI_API_KEY, а не раньше по цепочке.
+      // упало именно на отсутствии ключей ИИ, а не раньше по цепочке.
       assert.equal(status, 500);
-      assert.match(body.error, /GEMINI_API_KEY/);
+      assert.match(body.error, /MISTRAL_API_KEY/);
     }
   );
 

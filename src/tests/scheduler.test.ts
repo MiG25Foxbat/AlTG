@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.DB_PATH = ':memory:';
-delete process.env.GEMINI_API_KEY;
+delete process.env.MISTRAL_API_KEY;
+delete process.env.GROQ_API_KEY;
 
 import { getDb, closeDb } from '../db/database';
 import { addTopic, updateTopic } from '../db/alertsRepo';
@@ -101,7 +102,7 @@ test('ошибка LLM: следующая попытка через интер�
   const calls: SentPost[][] = [];
   const generate = async (_t: string, posts: SentPost[]) => {
     calls.push(posts);
-    if (fail) throw new Error('Gemini 500');
+    if (fail) throw new Error('LLM 500');
     return itemPerPost()(posts);
   };
   await schedulerTick({ userBot: fakeUserBot, generate }, DAY_14);
