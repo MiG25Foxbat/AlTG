@@ -40,8 +40,8 @@ Telegram Mini App (это в планах, не реализовано). С ре
 - Двухступенчатый фильтр в ручном поиске (keyword → фолбэк на полный
   ИИ-анализ корпуса), а не трёхслойный (keyword → эмбеддинги → LLM). В алертах
   фильтра по словам нет: все новые посты темы уходят в модель, по смыслу решает она
-- Одна основная модель — Mistral (`mistral-medium-latest`) с резервом Groq
-  (`openai/gpt-oss-120b`), а не продуманная мульти-провайдерная схема
+- Одна модель — Gemini (`GEMINI_MODEL`, по умолчанию `gemini-3.5-flash-lite`):
+  напрямую, резерв — та же модель через OpenRouter; не мульти-провайдерная схема
 - Render, а не Railway
 - Ручной `SESSION_STRING` через `.env`, а не magic-link реавторизация
 
@@ -63,12 +63,13 @@ Telegram Mini App (это в планах, не реализовано). С ре
   для прода; `telegram` (GramJS) заменён на `teleproto` (GramJS
   заархивирован, см. раздел "Известные грабли")
 - Telegram: `teleproto` (GramJS форк), MTProto-юзербот, не Bot API
-- ИИ: цепочка OpenAI-совместимых API через голый `fetch` (без SDK) —
-  Mistral первым, Groq резервом; весь код вызова ИИ — в
-  `src/modules/AiModule/llmClient.ts` (очередь Mistral ≤ 1 запрос/с —
-  `MISTRAL_MIN_INTERVAL_MS`; 429 → retry-after или 2/4/8 с, три повтора;
-  таймаут 30 с и прочие ошибки → тот же запрос в Groq). Gemini убран: не
-  отвечал с российских IP даже через VPN
+- ИИ: Gemini REST API напрямую через голый `fetch` (без SDK), резерв — та же
+  модель через OpenRouter (OpenAI-совместимый API, `google/<GEMINI_MODEL>`);
+  весь код вызова ИИ — в `src/modules/AiModule/llmClient.ts` (очередь Gemini
+  ≤ 1 запрос/с — `GEMINI_MIN_INTERVAL_MS`; 429 → retry-after/retryDelay или
+  2/4/8 с, три повтора; таймаут 30 с и прочие ошибки — в т. ч. «User location
+  is not supported» с российского IP — → тот же запрос в OpenRouter). Mistral и
+  Groq пробовали и убрали (октябрь 2026)
 - Frontend: чистый HTML/CSS/JS без фреймворка, `public/`
 - Бот алертов: `grammy` (Bot API), режим `BOT_MODE` = `webhook` | `polling`;
   отправка алертов — своя очередь `outbox` + `TelegramNotifier` (голый fetch)
@@ -119,7 +120,7 @@ src/
     FetchModule/fetchService.ts     # оркестрация: каналы → UserBot → БД
     FilterModule/keywordFilter.ts   # подстрочный keyword-фильтр (первая ступень)
     AiModule/
-      llmClient.ts           # единственное место с HTTP-вызовами к ИИ: Mistral → Groq (поиск + отчёт алерта)
+      llmClient.ts           # единственное место с HTTP-вызовами к ИИ: Gemini → OpenRouter (поиск + отчёт алерта)
       analyzeService.ts       # вторая ступень: релевантность + саммари; loadUnifiedPosts()
       reportValidator.ts      # проверка пунктов алерта: источники, дословная цитата, числа
     AlertModule/
@@ -256,7 +257,7 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 ## Правила безопасности с credentials — соблюдать всегда
 
 `SESSION_STRING` — это фактически полный доступ к Telegram-аккаунту,
-`MISTRAL_API_KEY` / `GROQ_API_KEY` — платёжный доступ к API ИИ, `SESSION_ENCRYPTION_KEY` —
+`GEMINI_API_KEY` / `OPEN_ROUTER_API_KEY` — платёжный доступ к API ИИ, `SESSION_ENCRYPTION_KEY` —
 ключ шифрования для конфиденциальных полей в БД. Все три:
 
 - живут только в `.env` (в `.gitignore`) или в переменных окружения
@@ -272,8 +273,8 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 Задеплоено на **Render** (бесплатный тариф) — не Railway, как
 предполагалось в целевой архитектуре. Причина именно Render: Gemini API
 не отвечал на запросы с российских IP, а Render даёт сервер за пределами
-РФ (сейчас ИИ — Mistral/Groq; их ключи на Render вписываются в Environment
-отдельно, локальный `.env` он не видит). Пользователь подтвердил: деплой работает, все функции протестированы
+РФ (на Render Gemini идёт напрямую, локально — через OpenRouter; ключи ИИ
+на Render вписываются в Environment отдельно, локальный `.env` он не видит). Пользователь подтвердил: деплой работает, все функции протестированы
 на проде.
 
 Особенности free-тарифа Render, которые нужно держать в голове при любых
@@ -322,10 +323,13 @@ Telegram-аккаунт (`src/modules/UserBotModule/personalAccount.ts`), что
 - **Keyword-фильтр — подстрока темы** («ставка» не находит «ставку») и есть
   только в ручном поиске. Из алертов убран: он пропускал к модели посты со
   словом «москве» и отсеивал «открылась кофейня» для темы «кафешки в Москве».
-- **Лимиты бесплатного Groq (`openai/gpt-oss-120b`): 8000 токенов в минуту,
-  1000 запросов в сутки** (заголовки `x-ratelimit-*`). Пока у Mistral лимит 0
-  (`x-ratelimit-limit-req-minute: 0` — не активирован тариф), всё идёт в Groq,
-  и запрос больше ~30–40 постов он отклонит.
+- **OpenRouter без `max_tokens` отвечает 402** («requires more credits»): по
+  умолчанию резервирует под ответ 65 тыс. токенов. В `llmClient.ts` стоит
+  `max_tokens` 8192 — не убирать при небольшом балансе.
+- **Ключ Mistral из «не того» рабочего пространства** давал 429 с
+  `x-ratelimit-limit-req-minute: 0` на любой модели, хотя Playground работал
+  (он ходит от сессии консоли, не от ключа). Проверять список моделей ключа:
+  `GET /v1/models`.
 
 ## Тестовая стратегия проекта
 

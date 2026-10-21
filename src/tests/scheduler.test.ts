@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.DB_PATH = ':memory:';
-delete process.env.MISTRAL_API_KEY;
-delete process.env.GROQ_API_KEY;
+delete process.env.GEMINI_API_KEY;
+delete process.env.OPEN_ROUTER_API_KEY;
 
 import { getDb, closeDb } from '../db/database';
 import { addTopic, updateTopic } from '../db/alertsRepo';

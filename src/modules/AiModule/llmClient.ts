@@ -1,18 +1,19 @@
 import { logger } from '../../utils/logger';
 
 /**
- * Единственная точка вызова ИИ во всём проекте: цепочка провайдеров с
- * OpenAI-совместимым API — Mistral первым, Groq резервом. Без SDK, голый
- * fetch: смена провайдера — правка этого файла.
+ * Единственная точка вызова ИИ во всём проекте: Gemini напрямую, резерв —
+ * та же модель через OpenRouter. Без SDK, голый fetch: смена провайдера —
+ * правка этого файла.
  *
- * - Все запросы к Mistral (и их повторы) идут через одну общую очередь — не
- *   чаще раза в MISTRAL_MIN_INTERVAL_MS (по умолчанию 1000 мс).
- * - 429 от Mistral: ждём retry-after или 2 / 4 / 8 с — до трёх повторов.
- * - Любая другая ошибка Mistral (таймаут 30 с, сеть, 5xx, ключ, не-JSON) или
- *   кончились повторы — тот же запрос сразу в Groq; Groq — одна попытка.
- * - Ответ — JSON-объект (response_format json_object), поля описаны в
- *   системном промпте. Доверять ему нельзя: пункты алертов потом проверяет
- *   reportValidator.ts.
+ * - Все запросы к Gemini (и их повторы) идут через одну общую очередь — не
+ *   чаще раза в GEMINI_MIN_INTERVAL_MS (по умолчанию 1000 мс).
+ * - 429 от Gemini: ждём retry-after (заголовок или retryDelay в теле) или
+ *   2 / 4 / 8 с — до трёх повторов.
+ * - Любая другая ошибка Gemini (с российского IP — «User location is not
+ *   supported», таймаут 30 с, сеть, 5xx, ключ, не-JSON) или кончились повторы —
+ *   тот же запрос сразу в OpenRouter (платно, с баланса); там одна попытка.
+ * - Ответ — JSON-объект, поля описаны в системном промпте. Доверять ему
+ *   нельзя: пункты алертов потом проверяет reportValidator.ts.
  */
 
 export class LlmQuotaError extends Error {
@@ -29,25 +30,65 @@ export class LlmConfigError extends Error {
   }
 }
 
-interface Provider {
-  name: 'Mistral' | 'Groq';
-  url: string;
-  apiKey: string | undefined;
-  model: string;
+export interface ChatMessage {
+  role: 'system' | 'user';
+  content: string;
 }
 
-// Ключи и модели читаем при каждом вызове: тесты и .env задают их после импорта модуля.
-const mistral = (): Provider => ({
-  name: 'Mistral',
-  url: 'https://api.mistral.ai/v1/chat/completions',
-  apiKey: process.env.MISTRAL_API_KEY,
-  model: process.env.MISTRAL_MODEL || 'mistral-medium-latest',
+interface HttpRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+interface Provider {
+  name: 'Gemini' | 'OpenRouter';
+  apiKey: string | undefined;
+  build(messages: ChatMessage[], temperature: number): HttpRequest;
+  /** Текст ответа модели из JSON ответа API */
+  extract(data: any): unknown;
+}
+
+/** OpenRouter резервирует под ответ до 65 тыс. токенов и без лимита отказывает (402) при скромном балансе. */
+const OPEN_ROUTER_MAX_TOKENS = 8192;
+
+const textOf = (messages: ChatMessage[], role: ChatMessage['role']) =>
+  messages.filter((m) => m.role === role).map((m) => m.content).join('\n\n');
+
+// Ключи и модель читаем при каждом вызове: тесты и .env задают их после импорта модуля.
+const geminiModel = () => process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+
+const gemini = (): Provider => ({
+  name: 'Gemini',
+  apiKey: process.env.GEMINI_API_KEY,
+  build: (messages, temperature) => ({
+    // Ключ — в заголовке, а не в URL: URL попадает в логи и тексты ошибок.
+    url: `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel()}:generateContent`,
+    headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
+    body: {
+      systemInstruction: { parts: [{ text: textOf(messages, 'system') }] },
+      contents: [{ role: 'user', parts: [{ text: textOf(messages, 'user') }] }],
+      generationConfig: { responseMimeType: 'application/json', temperature },
+    },
+  }),
+  extract: (data) => data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text ?? '').join(''),
 });
-const groq = (): Provider => ({
-  name: 'Groq',
-  url: 'https://api.groq.com/openai/v1/chat/completions',
-  apiKey: process.env.GROQ_API_KEY,
-  model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+
+const openRouter = (): Provider => ({
+  name: 'OpenRouter',
+  apiKey: process.env.OPEN_ROUTER_API_KEY,
+  build: (messages, temperature) => ({
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    headers: { Authorization: `Bearer ${process.env.OPEN_ROUTER_API_KEY ?? ''}` },
+    body: {
+      model: `google/${geminiModel()}`,
+      messages,
+      temperature,
+      response_format: { type: 'json_object' },
+      max_tokens: OPEN_ROUTER_MAX_TOKENS,
+    },
+  }),
+  extract: (data) => data?.choices?.[0]?.message?.content,
 });
 
 /** Ошибка одного запроса к провайдеру; kind решает, что делать дальше. */
@@ -67,113 +108,119 @@ export interface LlmDeps {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   timeoutMs: number;
-  mistralMinIntervalMs: number;
-  /** Паузы перед повторами на 429, если провайдер не прислал retry-after */
+  geminiMinIntervalMs: number;
+  /** Паузы перед повторами на 429, если провайдер не сказал, сколько ждать */
   retryDelaysMs: number[];
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user';
-  content: string;
+/** Сколько ждать после 429: заголовок retry-after или retryDelay из тела ошибки Google («34s»). */
+function retryAfterMs(response: Response, body: string): number | undefined {
+  const header = Number(response.headers.get('retry-after'));
+  if (header > 0) return header * 1000;
+  const fromBody = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body);
+  return fromBody ? Number(fromBody[1]) * 1000 : undefined;
 }
 
 export class LlmClient {
-  private nextMistralSlotAt = 0;
+  private nextGeminiSlotAt = 0;
 
   constructor(private readonly deps: LlmDeps) {}
 
   async completeJson(messages: ChatMessage[], temperature: number): Promise<any> {
-    const [m, g] = [mistral(), groq()];
-    if (!m.apiKey && !g.apiKey) {
+    const [g, r] = [gemini(), openRouter()];
+    if (!g.apiKey && !r.apiKey) {
       throw new LlmConfigError(
-        'Не задан ключ ИИ: добавьте в .env MISTRAL_API_KEY (https://console.mistral.ai) и/или GROQ_API_KEY (https://console.groq.com)'
+        'Не задан ключ ИИ: добавьте в .env GEMINI_API_KEY (https://aistudio.google.com/apikey) и/или OPEN_ROUTER_API_KEY (https://openrouter.ai/keys)'
       );
     }
 
-    let mistralError: ProviderError | undefined;
-    if (m.apiKey) {
+    let geminiError: ProviderError | undefined;
+    if (g.apiKey) {
       try {
-        return await this.mistralWithRetries(m, messages, temperature);
+        return await this.geminiWithRetries(g, messages, temperature);
       } catch (error) {
-        mistralError = error as ProviderError;
-        if (!g.apiKey) throw toPublicError(mistralError);
-        logger.warn(`${mistralError.message} — отправляю тот же запрос в Groq`);
+        geminiError = error as ProviderError;
+        if (!r.apiKey) throw toPublicError(geminiError);
+        logger.warn(`${geminiError.message} — отправляю тот же запрос в OpenRouter`);
       }
     }
 
     try {
-      return await this.request(g, messages, temperature);
+      return await this.request(r, messages, temperature);
     } catch (error) {
-      const groqError = error as ProviderError;
-      logger.error(`ИИ не ответил: ${[mistralError?.message, groqError.message].filter(Boolean).join('; ')}`);
-      throw toPublicError(groqError, mistralError);
+      const routerError = error as ProviderError;
+      logger.error(`ИИ не ответил: ${[geminiError?.message, routerError.message].filter(Boolean).join('; ')}`);
+      throw toPublicError(routerError, geminiError);
     }
   }
 
   /**
-   * Общая очередь Mistral: слот занимается синхронно (до первого await), так что
+   * Общая очередь Gemini: слот занимается синхронно (до первого await), так что
    * параллельные вызовы встают строго друг за другом с шагом minInterval.
    */
-  private async mistralSlot(): Promise<void> {
+  private async geminiSlot(): Promise<void> {
     const now = this.deps.now();
-    const slot = Math.max(now, this.nextMistralSlotAt);
-    this.nextMistralSlotAt = slot + this.deps.mistralMinIntervalMs;
+    const slot = Math.max(now, this.nextGeminiSlotAt);
+    this.nextGeminiSlotAt = slot + this.deps.geminiMinIntervalMs;
     if (slot > now) await this.deps.sleep(slot - now);
   }
 
-  private async mistralWithRetries(p: Provider, messages: ChatMessage[], temperature: number): Promise<any> {
+  private async geminiWithRetries(p: Provider, messages: ChatMessage[], temperature: number): Promise<any> {
     for (let retry = 0; ; retry++) {
-      await this.mistralSlot();
+      await this.geminiSlot();
       try {
         return await this.request(p, messages, temperature);
       } catch (error) {
         const e = error as ProviderError;
         if (e.kind !== 'rate_limit' || retry >= this.deps.retryDelaysMs.length) throw e;
         const wait = e.retryAfterMs ?? this.deps.retryDelaysMs[retry];
-        // retry-after в минуты/часы (кончилась квота) не ждём — иначе встанет планировщик.
+        // Ждать дольше таймаута (кончилась дневная квота) не будем — иначе встанет планировщик.
         if (wait > this.deps.timeoutMs) throw e;
-        logger.warn(`Mistral: 429, повтор ${retry + 1} через ${Math.round(wait / 1000)} с`);
+        logger.warn(`Gemini: 429, повтор ${retry + 1} через ${Math.round(wait / 1000)} с`);
         await this.deps.sleep(wait);
       }
     }
   }
 
   private async request(p: Provider, messages: ChatMessage[], temperature: number): Promise<any> {
+    const { url, headers, body } = p.build(messages, temperature);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs);
+    const timeout = () => new ProviderError(p.name, 'timeout', `нет ответа за ${this.deps.timeoutMs / 1000} с`);
     try {
       let response: Response;
       try {
-        response = await this.deps.fetch(p.url, {
+        response = await this.deps.fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.apiKey}` },
-          body: JSON.stringify({ model: p.model, messages, temperature, response_format: { type: 'json_object' } }),
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
       } catch (error: any) {
-        if (controller.signal.aborted) throw new ProviderError(p.name, 'timeout', `нет ответа за ${this.deps.timeoutMs / 1000} с`);
+        if (controller.signal.aborted) throw timeout();
         throw new ProviderError(p.name, 'failed', `сетевая ошибка (${error?.cause?.code || error?.message || error})`);
       }
 
-      if (response.status === 429) {
-        const seconds = Number(response.headers.get('retry-after'));
-        throw new ProviderError(p.name, 'rate_limit', 'лимит запросов (429)', seconds > 0 ? seconds * 1000 : undefined);
-      }
       const text = await response.text().catch(() => {
-        if (controller.signal.aborted) throw new ProviderError(p.name, 'timeout', `нет ответа за ${this.deps.timeoutMs / 1000} с`);
+        if (controller.signal.aborted) throw timeout();
         return '';
       });
-      if (!response.ok) throw new ProviderError(p.name, 'failed', `ошибка ${response.status}: ${text.slice(0, 300)}`);
+      if (response.status === 429) {
+        throw new ProviderError(p.name, 'rate_limit', 'лимит запросов (429)', retryAfterMs(response, text));
+      }
+      if (!response.ok) {
+        throw new ProviderError(p.name, 'failed', `ошибка ${response.status}: ${text.replace(/\s+/g, ' ').slice(0, 300)}`);
+      }
 
       let content: unknown;
       try {
-        content = JSON.parse(text)?.choices?.[0]?.message?.content;
+        content = p.extract(JSON.parse(text));
       } catch {
         throw new ProviderError(p.name, 'failed', 'ответ API не JSON');
       }
       if (typeof content !== 'string' || !content.trim()) throw new ProviderError(p.name, 'failed', 'пустой ответ');
       try {
-        // json_object гарантирует JSON, но обёртку ```json на всякий случай снимаем
+        // Режим JSON гарантирует JSON, но обёртку ```json на всякий случай снимаем
         return JSON.parse(content.trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
       } catch {
         throw new ProviderError(p.name, 'failed', `модель ответила не JSON: ${content.slice(0, 200)}`);
@@ -192,14 +239,14 @@ function toPublicError(last: ProviderError, previous?: ProviderError): Error {
 
 let defaultClient: LlmClient | undefined;
 
-/** Общий клиент процесса — одна очередь Mistral на всех. */
+/** Общий клиент процесса — одна очередь Gemini на всех. */
 function client(): LlmClient {
   return (defaultClient ??= new LlmClient({
     fetch: (...args) => fetch(...args),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: Date.now,
     timeoutMs: 30_000,
-    mistralMinIntervalMs: Number(process.env.MISTRAL_MIN_INTERVAL_MS) || 1000,
+    geminiMinIntervalMs: Number(process.env.GEMINI_MIN_INTERVAL_MS) || 1000,
     retryDelaysMs: [2000, 4000, 8000],
   }));
 }

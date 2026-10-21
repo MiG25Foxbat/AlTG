@@ -9,8 +9,8 @@ import { randomBytes } from 'node:crypto';
 
 process.env.DB_PATH = ':memory:';
 process.env.SESSION_ENCRYPTION_KEY = randomBytes(32).toString('base64');
-delete process.env.MISTRAL_API_KEY;
-delete process.env.GROQ_API_KEY;
+delete process.env.GEMINI_API_KEY;
+delete process.env.OPEN_ROUTER_API_KEY;
 
 import { createApp } from '../app';
 import { closeDb } from '../db/database';
@@ -168,7 +168,7 @@ test('HTTP API: полный сценарий работы с каналами �
       // Дошли до реального вызова ИИ (посты получены, сохранены, отфильтрованы) —
       // упало именно на отсутствии ключей ИИ, а не раньше по цепочке.
       assert.equal(status, 500);
-      assert.match(body.error, /MISTRAL_API_KEY/);
+      assert.match(body.error, /GEMINI_API_KEY/);
     }
   );
 
