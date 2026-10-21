@@ -13,6 +13,7 @@ import { insertPrivatePosts } from '../db/privatePostsRepo';
 import { linkPrivateChat, getLinkByChat, setPause } from '../db/destinationsRepo';
 import { tryAcquireLease, releaseLease } from '../db/locksRepo';
 import { schedulerTick, previewAlerts, SchedulerDeps } from '../modules/AlertModule/scheduler';
+import { analyzeTopicPosts } from '../modules/AlertModule/pipeline';
 import { IUserBotReader } from '../modules/UserBotModule/IUserBotReader';
 
 // Время в МСК → unix-секунды.
@@ -55,7 +56,6 @@ const q = async (sql: string) => ((await (await getDb()).execute(sql)).rows as a
 
 test('проверка: один вызов LLM на подписку, отчёт уходит в outbox с кнопками; разобранные посты повторно в LLM не идут', async () => {
   const { topic } = await setup();
-  // keyword-фильтр прототипа — подстрока темы, поэтому «ставка» в обоих постах дословно
   await post('@pub', 'ЦБ: ключевая ставка повышена до 21% годовых', DAY_14 - 300);
   await post('@pub', 'Ставка по ипотеке выросла до 25 процентов', DAY_14 - 200);
   const llm = fakeLlm(itemPerPost());
@@ -278,4 +278,19 @@ test('ошибки отвергнутой сессии распознаются;
   assert.equal(await getSessionStatus(userId), 'active');
   assert.equal((await q('SELECT reauth_notified_at FROM telegram_accounts'))[0].reauth_notified_at, null);
   closeDb();
+});
+
+test('алерты без фильтра по словам: в модель уходят все новые посты темы, релевантность решает она', async () => {
+  const posts = [
+    { channel: '@msk', isPrivate: false, messageId: 1, text: 'Подборка выставок на выходные: Пушкинский и ГЭС-2', postedAt: DAY_14 },
+    { channel: '@msk', isPrivate: false, messageId: 2, text: 'На Патриарших открылась кофейня с десертами', postedAt: DAY_14 },
+    { channel: '@msk', isPrivate: false, messageId: 3, text: 'Перекрытия на Садовом кольце до пятницы', postedAt: DAY_14 },
+  ];
+  // ни одного слова темы в постах нет — раньше подстрочный фильтр их бы отсеял
+  const llm = fakeLlm((sent) => [{ text: sent[1].text, source_ids: [1], quote: sent[1].text.slice(0, 20), urgency: 'normal' }]);
+  const result = await analyzeTopicPosts('куда сходить в городе', posts, llm.generate);
+  assert.deepEqual(llm.calls[0].map((p) => p.text), posts.map((p) => p.text));
+  assert.equal(result.sentToAi, 3);
+  assert.equal(result.processed.length, 3); // всё отданное модели считается разобранным
+  assert.deepEqual(result.valid.map((v) => v.sources[0].messageId), [2]);
 });

@@ -1,5 +1,4 @@
 import { UnifiedPost, toLink, MAX_POSTS_SENT_TO_LLM } from '../AiModule/analyzeService';
-import { extractKeywords, keywordPreFilter } from '../FilterModule/keywordFilter';
 import { generateAlertReport } from '../AiModule/llmClient';
 import { validateReportItems, ValidItem, RejectedItem } from '../AiModule/reportValidator';
 import { MessageItem } from './messageFormat';
@@ -16,10 +15,12 @@ export interface TopicAnalysis {
 }
 
 /**
- * Новые посты подписки → keyword-фильтр (ничего не нашёл — фолбэк на все
- * посты) → ОДИН вызов LLM на всю подписку → проверка каждого пункта.
- * Нет постов — нет вызова LLM. Отсеянное ключевыми словами считается
- * разобранным; не влезшее в лимит постов для LLM — нет (уйдёт в следующую проверку).
+ * Новые посты подписки → ОДИН вызов LLM на всю подписку → проверка каждого
+ * пункта. Без фильтра по ключевым словам: что относится к теме, решает модель
+ * по смыслу (как в ручном поиске), — подстрочный фильтр терял посты вроде
+ * «открылась кофейня» для темы «кафешки». Нет постов — нет вызова LLM.
+ * Не влезшее в лимит постов для LLM не считается разобранным — уйдёт в
+ * следующую проверку.
  */
 export async function analyzeTopicPosts(
   topicLabel: string,
@@ -28,14 +29,10 @@ export async function analyzeTopicPosts(
 ): Promise<TopicAnalysis> {
   if (posts.length === 0) return { processed: [], valid: [], rejected: [], sentToAi: 0 };
 
-  const matches = keywordPreFilter(posts, extractKeywords(topicLabel));
-  const candidates = (matches.length > 0 ? matches : posts).slice(0, MAX_POSTS_SENT_TO_LLM);
-  const matched = new Set(matches);
-  const filteredOut = matches.length > 0 ? posts.filter((p) => !matched.has(p)) : [];
-
+  const candidates = posts.slice(0, MAX_POSTS_SENT_TO_LLM);
   const raw = await generate(topicLabel, candidates.map((p, index) => ({ index, text: p.text })));
   const { valid, rejected } = validateReportItems(raw, candidates);
-  return { processed: [...candidates, ...filteredOut], valid, rejected, sentToAi: candidates.length };
+  return { processed: candidates, valid, rejected, sentToAi: candidates.length };
 }
 
 /** Проверенные пункты → пункты сообщения: ссылки и время постов — из наших метаданных, не от модели. */
