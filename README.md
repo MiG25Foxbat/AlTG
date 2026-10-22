@@ -302,4 +302,5 @@ npm test
 ## Деплой на свой сервер (Ubuntu)
 
 Пошагово — в [deploy/UBUNTU.md](deploy/UBUNTU.md): служба systemd, база в `data/app.db`
-не стирается. Архив для переноса: `git archive --format=tar.gz -o alert-ubuntu.tar.gz HEAD`.
+не стирается. Архив для переноса (без `-c core.autocrlf=false` на Windows скрипты получат
+CRLF и не запустятся в Linux): `git -c core.autocrlf=false archive --format=tar.gz -o alert-ubuntu.tar.gz HEAD`.
