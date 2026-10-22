@@ -1,0 +1,21 @@
+[Unit]
+Description=Telegram-алерты (alert)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=alert
+WorkingDirectory=/opt/alert
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+RestartSec=10
+# Остановка — только штатная: сервер ловит SIGINT и корректно закрывает
+# MTProto-сессию. Жёсткое убийство процесса может аннулировать SESSION_STRING
+# (AUTH_KEY_DUPLICATED), поэтому даём ему время закрыться.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

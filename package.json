@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "ts-node src/server.ts",
+    "start:prod": "node dist/server.js",
     "dev": "ts-node src/server.ts",
     "legacy-bot": "ts-node src/index.ts",
     "build": "tsc",

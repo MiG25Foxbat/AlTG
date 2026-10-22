@@ -59,3 +59,5 @@ Thumbs.db
 .cursorignore
 .cursorrules
 .gitattributes
+# Архив для переноса на сервер
+/alert-ubuntu.tar.gz

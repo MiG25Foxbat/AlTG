@@ -298,3 +298,8 @@ npm test
 - Выгрузка интерфейса в Telegram Mini App — фронтенд специально написан без
   внешних зависимостей и без браузерного `localStorage`, чтобы перенос был
   минимальной правкой.
+
+## Деплой на свой сервер (Ubuntu)
+
+Пошагово — в [deploy/UBUNTU.md](deploy/UBUNTU.md): служба systemd, база в `data/app.db`
+не стирается. Архив для переноса: `git archive --format=tar.gz -o alert-ubuntu.tar.gz HEAD`.
