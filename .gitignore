@@ -61,3 +61,6 @@ Thumbs.db
 .gitattributes
 # Архив для переноса на сервер
 /alert-ubuntu.tar.gz
+
+# Выгрузки разведчика Firecrawl
+/.firecrawl/
