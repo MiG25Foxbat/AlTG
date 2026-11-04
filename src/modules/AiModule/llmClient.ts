@@ -364,13 +364,16 @@ export function hasLlmKeys(): boolean {
 
 let freebiesClient: LlmClient | undefined;
 
-/** Свой клиент: таймаут 10 с и без повторов на 429, иначе источник ждал бы нейросеть дольше своего интервала. */
+/**
+ * Свой клиент: без повторов на 429 и по 5 с на каждого провайдера (Gemini, затем резерв OpenRouter):
+ * вместе не больше 10 с, иначе источник ждал бы нейросеть дольше своего интервала.
+ */
 function freebiesLlm(): LlmClient {
   return (freebiesClient ??= new LlmClient({
     fetch: (...args) => fetch(...args),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: Date.now,
-    timeoutMs: 10_000,
+    timeoutMs: 5_000,
     geminiMinIntervalMs: Number(process.env.GEMINI_MIN_INTERVAL_MS) || 1000,
     retryDelaysMs: [],
   }));

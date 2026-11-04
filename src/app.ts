@@ -39,6 +39,7 @@ import {
   listSources,
 } from './db/dealsRepo';
 import { freebiesStats } from './modules/FreebiesModule/stats';
+import { previewDeals } from './modules/AlertModule/dealDelivery';
 import { LlmConfigError, LlmQuotaError } from './modules/AiModule/llmClient';
 import { InvalidTimeWindowError, TIME_WINDOW_OPTIONS } from './utils/time';
 import { IUserBotReader } from './modules/UserBotModule/IUserBotReader';
@@ -489,6 +490,16 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
       return res.status(400).json({ error: 'Нужен объект с настройками' });
     }
     res.json({ settings: await updateFreebiesSettings(req.userId!, req.body, Math.floor(Date.now() / 1000)) });
+  });
+
+  /** Сухой прогон рассылки: что и когда ушло бы сейчас. Ничего не пишет. */
+  app.post('/api/freebies/preview', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const minutes = req.body?.minutes === undefined ? 60 : Number(req.body.minutes);
+    if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) {
+      return res.status(400).json({ error: 'minutes: целое число от 15 до 1440' });
+    }
+    const settings = await getFreebiesSettings(req.userId!);
+    res.json(await previewDeals(req.userId!, settings, minutes, Math.floor(Date.now() / 1000)));
   });
 
   app.get('/api/freebies/sources', requireAuth, async (_req: AuthedRequest, res: Response) => {

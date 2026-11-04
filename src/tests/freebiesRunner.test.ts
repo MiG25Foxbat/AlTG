@@ -242,6 +242,30 @@ test('переход на другой хост и ответ больше 2 М�
   assert.equal((await s.deals()).length, 1);
 });
 
+test('исключение внутри проверки тоже неудача: источник с постоянной ошибкой отключится', async () => {
+  const s = await setup([A], () => notFound());
+  const db = await getDb();
+  await db.execute(`UPDATE deal_sources SET url = 'не адрес' WHERE key = 'a'`);
+  for (let i = 1; i <= 5; i++) {
+    s.clock.t = T0 + i * 1000;
+    await s.runner.tick();
+  }
+  const src = await s.source();
+  assert.equal(src.failCount, 5);
+  assert.equal(src.isActive, false);
+  assert.equal(src.disabledReason, 'errors');
+});
+
+test('robots.txt с переходом на другой хост - неудача, а не «можно всё»', async () => {
+  const s = await setup([A], (url) =>
+    url.pathname === '/robots.txt' ? new Response(null, { status: 302, headers: { location: 'https://evil.example/robots.txt' } }) : new Response(page('chan_a', []))
+  );
+  await s.runner.tick();
+  assert.equal((await s.source()).failCount, 1);
+  assert.equal(s.net.pages().length, 0);
+  assert.ok(!s.net.calls.some((c) => c.url.includes('evil.example')));
+});
+
 test('разброс интервала +-20%', async () => {
   for (const [random, expected] of [[0, 96], [1, 144]] as const) {
     const s = await setup([A], (url) => (url.pathname === '/robots.txt' ? notFound() : new Response(page('chan_a', []))), { random: () => random });
@@ -267,33 +291,36 @@ test('два источника на одном хосте опрашивают�
   assert.equal(s.net.calls.filter((c) => c.url.endsWith('/robots.txt')).length, 1, 'robots.txt хоста читается один раз на оба источника');
 });
 
-test('нейросеть: один вызов на тик источника, только для новых записей; упала - акция остаётся; afterSave получает id', async () => {
+test('нейросеть: на первом (muted) опросе не зовётся; потом один вызов на тик, только для новых записей; упала - акция остаётся; afterSave получает id', async () => {
   const batches: string[][] = [];
   const saved: number[][] = [];
-  const s = await setup(
-    [A],
-    (url) => (url.pathname === '/robots.txt' ? notFound() : new Response(page('chan_a', ['AAA111', 'BBB222']))),
-    {
-      classify: async (items) => {
-        batches.push(items.map((i) => i.text));
-        throw new Error('нейросеть недоступна');
-      },
-      afterSave: async (ids) => {
-        saved.push(ids);
-      },
-    }
-  );
+  let codes = ['AAA111'];
+  const s = await setup([A], (url) => (url.pathname === '/robots.txt' ? notFound() : new Response(page('chan_a', codes))), {
+    classify: async (items) => {
+      batches.push(items.map((i) => i.text));
+      throw new Error('нейросеть недоступна');
+    },
+    afterSave: async (ids) => {
+      saved.push(ids);
+    },
+  });
+  await s.runner.tick();
+  assert.equal(batches.length, 0, 'первый опрос: акции всё равно не рассылаются');
+  assert.equal(saved.length, 1);
+
+  codes = ['AAA111', 'BBB222', 'CCC333'];
+  s.clock.t = T0 + 200;
   await s.runner.tick();
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].length, 2);
-  assert.equal(saved.length, 1);
-  assert.equal(saved[0].length, 2);
-  assert.equal((await s.deals()).length, 2);
+  assert.equal(batches[0].length, 2, 'AAA111 уже в базе и в нейросеть не идёт');
+  assert.equal(saved.length, 2);
+  assert.equal(saved[1].length, 2);
+  assert.deepEqual((await s.deals()).map((d) => d.promo_code), ['AAA111', 'BBB222', 'CCC333']);
 
-  s.clock.t = T0 + 200;
+  s.clock.t = T0 + 400;
   await s.runner.tick(); // те же посты: ключи уже в базе
   assert.equal(batches.length, 1, 'для уже известных записей нейросеть не зовётся');
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 2);
 });
 
 test('startFreebiesWorker: пишет три источника первого захода в базу, опрашивает и останавливается', async () => {

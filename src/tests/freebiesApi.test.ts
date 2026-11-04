@@ -123,6 +123,24 @@ test('HTTP API халявы: вход, лента, акции, настройк�
     assert.equal(patched.body.settings.evil, undefined);
     assert.equal((await api('/api/freebies/settings', { method: 'PATCH', body: '[1]' })).status, 400);
 
+    // Сухой прогон: за сутки, без записи; бот не привязан и алерты выключены - но считается так, будто включены.
+    for (const bad of [{ minutes: 5 }, { minutes: 2000 }, { minutes: 'x' }, { minutes: 30.5 }]) {
+      assert.equal((await api('/api/freebies/preview', { method: 'POST', body: JSON.stringify(bad) })).status, 400, JSON.stringify(bad));
+    }
+    await api('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify({ minDiscount: 0 }) });
+    const preview = await api('/api/freebies/preview', { method: 'POST', body: '{}' });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.alertsEnabled, false);
+    assert.equal(preview.body.botLinked, false);
+    const byDeal = Object.fromEntries(preview.body.results.map((r: any) => [r.deal.id, r]));
+    assert.equal(byDeal[2].reason, 'filtered'); // магазин wildberries не выбран
+    assert.ok(['ok', 'held'].includes(byDeal[1].reason)); // ночью по Москве придержала бы
+    assert.ok(byDeal[1].message.includes('GA30'));
+    assert.equal(byDeal[2].message, null);
+    assert.equal(byDeal[3], undefined, 'двухдневная акция в окно не попала');
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM deal_deliveries')).rows[0].n, 0);
+    assert.equal((await db.execute('SELECT COUNT(*) AS n FROM outbox')).rows[0].n, 0);
+
     const sources = await api('/api/freebies/sources');
     assert.equal(sources.body.llmCalls, 0);
     assert.deepEqual(sources.body.sources, [

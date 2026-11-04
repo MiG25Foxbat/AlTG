@@ -149,7 +149,7 @@ export function sanitizeFreebiesSettings(input: unknown, base: FreebiesSettings 
   };
 }
 
-function parseSettings(json: string | null | undefined): FreebiesSettings {
+export function parseSettings(json: string | null | undefined): FreebiesSettings {
   try {
     return sanitizeFreebiesSettings(json ? JSON.parse(json) : null);
   } catch {
@@ -273,7 +273,7 @@ export async function existingDedupKeys(keys: string[]): Promise<Set<string>> {
 }
 
 export const DEAL_SELECT = `SELECT d.id, d.source_id, s.title AS source_title, s.site_url, d.store, d.category, d.title, d.url,
-       d.promo_code, d.discount_percent, d.discount_text, d.expires_at, d.published_at, d.found_at
+       d.promo_code, d.discount_percent, d.discount_text, d.expires_at, d.published_at, d.found_at, d.muted
   FROM deals d JOIN deal_sources s ON s.id = d.source_id`;
 
 export function dealFromRow(r: any, now: number): Deal {
@@ -428,4 +428,12 @@ export async function disableSource(id: number, reason: 'robots' | 'errors' | 'm
     sql: 'UPDATE deal_sources SET is_active = 0, disabled_reason = ?, last_checked_at = ? WHERE id = ?',
     args: [reason, now, id],
   });
+}
+
+/** Акции по id (для выпуска придержанных). */
+export async function getDealsByIds(ids: number[], now: number): Promise<Deal[]> {
+  if (ids.length === 0) return [];
+  const db = await getDb();
+  const r = await db.execute({ sql: `${DEAL_SELECT} WHERE d.id IN (${ids.map(() => '?').join(',')})`, args: ids });
+  return (r.rows as any[]).map((row) => dealFromRow(row, now));
 }

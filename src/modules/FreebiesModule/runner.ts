@@ -10,6 +10,7 @@ import {
 } from '../../db/dealsRepo';
 import { logger } from '../../utils/logger';
 import { classifyDeals, hasLlmKeys } from '../AiModule/llmClient';
+import { deliverDeals } from '../AlertModule/dealDelivery';
 import { Classify, ingestRawDeals } from './ingest';
 import { ALLOW_ALL, Robots, parseRobots } from './robots';
 import { SOURCES, SourceConfig, sourceDefs } from './sources';
@@ -43,6 +44,8 @@ export interface RunnerDeps {
   classify?: Classify;
   /** Вызывается после сохранения новых акций (доставка) */
   afterSave?: (dealIds: number[]) => Promise<void>;
+  /** Раз в минуту: доставка и выпуск придержанного. По умолчанию deliverDeals */
+  deliver?: (now: number) => Promise<void>;
   /** По умолчанию SOURCES */
   sources?: SourceConfig[];
 }
@@ -131,7 +134,8 @@ export function createFreebiesRunner(deps: RunnerDeps) {
     const out = await request(new URL('/robots.txt', url.origin), {});
     let robots: Robots;
     if (out.type === 'ok') robots = parseRobots(out.body, USER_AGENT);
-    else if (out.type === 'fail') robots = ALLOW_ALL;
+    // 4xx - файла нет, можно всё; переход на другой хост и прочие отказы - проверка неудачная.
+    else if (out.type === 'fail' && out.status !== null && out.status >= 400 && out.status < 500) robots = ALLOW_ALL;
     else return out;
     robotsCache.set(url.origin, { robots, until: now + ROBOTS_TTL_SEC });
     return robots;
@@ -213,8 +217,8 @@ export function createFreebiesRunner(deps: RunnerDeps) {
         try {
           await check(source);
         } catch (error) {
-          logger.error(`Халява: ${source.key}: ошибка проверки`, error);
-          await deferSource(source.id, now, now + source.intervalSec).catch(() => {});
+          // Исключение внутри проверки - тоже неудача, иначе источник с постоянной ошибкой не отключится.
+          await fail(source, now, `ошибка проверки: ${(error as Error)?.message || error}`).catch((e) => logger.error('Халява: не записать неудачу', e));
         }
       }
       if (now - lastCleanup >= CLEANUP_EVERY_SEC) {
@@ -232,17 +236,21 @@ const countedClassify: Classify = async (items) => {
   return classifyDeals(items);
 };
 
-/** Фоновый цикл раннера под замком одного экземпляра. Тики не накладываются. Возвращает stop(). */
+/** Фоновый цикл раннера и минутная доставка под замком одного экземпляра. Тики не накладываются. Возвращает stop(). */
 export function startFreebiesWorker(deps: Partial<RunnerDeps> = {}): () => void {
+  const now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+  const deliver = deps.deliver ?? deliverDeals;
   const runner = createFreebiesRunner({
     fetch: (...args) => fetch(...args),
-    now: () => Math.floor(Date.now() / 1000),
+    now,
     random: Math.random,
     classify: countedClassify,
+    afterSave: () => deliver(now()),
     ...deps,
   });
   let stopped = false;
   let ready = false;
+  let lastDelivery = 0;
   let timer: NodeJS.Timeout;
   const run = async () => {
     try {
@@ -253,6 +261,15 @@ export function startFreebiesWorker(deps: Partial<RunnerDeps> = {}): () => void 
       await runner.tick();
     } catch (error) {
       logger.error('Халява: ошибка тика', error);
+    }
+    try {
+      // Раз в минуту, даже если новых акций нет: выпуск придержанных и подхват пропущенного.
+      if (now() - lastDelivery >= 60) {
+        lastDelivery = now();
+        await deliver(lastDelivery);
+      }
+    } catch (error) {
+      logger.error('Халява: ошибка доставки', error);
     }
     if (!stopped) timer = setTimeout(run, TICK_MS);
   };
