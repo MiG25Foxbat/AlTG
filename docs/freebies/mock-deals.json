@@ -1,0 +1,167 @@
+{
+  "_note": "Пример формата из CONTRACT.md. Промокоды, ссылки и акции выдуманы. Время: около 5 ноября 2026, 04:00 МСК.",
+  "deals": {
+    "deals": [
+      {
+        "id": 101,
+        "sourceId": 1,
+        "sourceTitle": "Pepper.ru",
+        "sourceUrl": "https://www.pepper.ru/",
+        "store": "goldapple",
+        "category": "beauty",
+        "title": "Минус 30% на уходовую косметику по промокоду",
+        "url": "https://goldapple.ru/example-promo",
+        "promoCode": "PRIMER30",
+        "discountPercent": 30,
+        "discountText": "-30%",
+        "expiresAt": 1793872800,
+        "publishedAt": 1793840100,
+        "foundAt": 1793840160,
+        "status": "live"
+      },
+      {
+        "id": 102,
+        "sourceId": 2,
+        "sourceTitle": "Канал Золотого яблока",
+        "sourceUrl": "https://t.me/example_goldapple",
+        "store": "goldapple",
+        "category": "beauty",
+        "title": "Подарок к заказу от 3000 ₽",
+        "url": "https://goldapple.ru/example-gift",
+        "promoCode": "PODAROK",
+        "discountPercent": null,
+        "discountText": "подарок от 3000 ₽",
+        "expiresAt": null,
+        "publishedAt": 1793838600,
+        "foundAt": 1793838650,
+        "status": "maybe_over"
+      },
+      {
+        "id": 103,
+        "sourceId": 1,
+        "sourceTitle": "Pepper.ru",
+        "sourceUrl": "https://www.pepper.ru/",
+        "store": "wildberries",
+        "category": "fashion",
+        "title": "Кроссовки со скидкой 55% без промокода",
+        "url": "https://www.wildberries.ru/catalog/0000000/detail.aspx",
+        "promoCode": null,
+        "discountPercent": 55,
+        "discountText": "-55%",
+        "expiresAt": null,
+        "publishedAt": 1793840280,
+        "foundAt": 1793840300,
+        "status": "live"
+      },
+      {
+        "id": 104,
+        "sourceId": 3,
+        "sourceTitle": "Пример агрегатора",
+        "sourceUrl": "https://example.org/",
+        "store": "wildberries",
+        "category": "pets",
+        "title": "Корм для кошек: 500 ₽ на первый заказ",
+        "url": "https://www.wildberries.ru/example-pets",
+        "promoCode": "KOTIK500",
+        "discountPercent": null,
+        "discountText": "500 ₽ на первый заказ",
+        "expiresAt": 1793800000,
+        "publishedAt": 1793790000,
+        "foundAt": 1793790100,
+        "status": "expired"
+      }
+    ]
+  },
+  "feed": {
+    "items": [
+      {
+        "kind": "deal",
+        "id": "deal:103",
+        "at": 1793840300,
+        "title": "Wildberries",
+        "text": "Кроссовки со скидкой 55% без промокода",
+        "link": "https://www.wildberries.ru/catalog/0000000/detail.aspx",
+        "sourceLabel": "Pepper.ru",
+        "deal": {
+          "id": 103,
+          "sourceId": 1,
+          "sourceTitle": "Pepper.ru",
+          "sourceUrl": "https://www.pepper.ru/",
+          "store": "wildberries",
+          "category": "fashion",
+          "title": "Кроссовки со скидкой 55% без промокода",
+          "url": "https://www.wildberries.ru/catalog/0000000/detail.aspx",
+          "promoCode": null,
+          "discountPercent": 55,
+          "discountText": "-55%",
+          "expiresAt": null,
+          "publishedAt": 1793840280,
+          "foundAt": 1793840300,
+          "status": "live"
+        }
+      },
+      {
+        "kind": "post",
+        "id": "post:@example_news:5123",
+        "at": 1793840200,
+        "title": "Пример новостного канала",
+        "text": "Пример поста из канала, который пользователь добавил во вкладке «Каналы».",
+        "link": "https://t.me/example_news/5123",
+        "sourceLabel": "@example_news"
+      },
+      {
+        "kind": "deal",
+        "id": "deal:101",
+        "at": 1793840160,
+        "title": "Золотое яблоко",
+        "text": "Минус 30% на уходовую косметику по промокоду",
+        "link": "https://goldapple.ru/example-promo",
+        "sourceLabel": "Pepper.ru",
+        "deal": {
+          "id": 101,
+          "sourceId": 1,
+          "sourceTitle": "Pepper.ru",
+          "sourceUrl": "https://www.pepper.ru/",
+          "store": "goldapple",
+          "category": "beauty",
+          "title": "Минус 30% на уходовую косметику по промокоду",
+          "url": "https://goldapple.ru/example-promo",
+          "promoCode": "PRIMER30",
+          "discountPercent": 30,
+          "discountText": "-30%",
+          "expiresAt": 1793872800,
+          "publishedAt": 1793840100,
+          "foundAt": 1793840160,
+          "status": "live"
+        }
+      }
+    ]
+  },
+  "settings": {
+    "settings": {
+      "profile": null,
+      "alertsEnabled": false,
+      "stores": [],
+      "categories": [],
+      "onlyWithPromo": false,
+      "minDiscount": 0,
+      "breakQuiet": false,
+      "quietEnabled": true,
+      "quietFrom": "23:00",
+      "quietTo": "08:00",
+      "maxPerDay": 30
+    },
+    "stores": [
+      { "code": "goldapple", "label": "Золотое яблоко" },
+      { "code": "wildberries", "label": "Wildberries" },
+      { "code": "ozon", "label": "Ozon" },
+      { "code": "other", "label": "Другие магазины" }
+    ],
+    "categories": [
+      { "code": "beauty", "label": "Красота" },
+      { "code": "fashion", "label": "Мода" },
+      { "code": "pets", "label": "Зоотовары" },
+      { "code": "other", "label": "Другое" }
+    ]
+  }
+}
