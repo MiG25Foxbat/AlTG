@@ -3,12 +3,11 @@
  *
  * Express-приложение из createApp на базе в памяти, фейковый читатель каналов, без бота, без опроса
  * источников, без нейросети и без .env (dotenv не подключается). Слушает только 127.0.0.1.
- * Акции - из очищенных сохранённых страниц src/tests/fixtures/freebies через тот же разбор, что и в сервисе,
- * время сдвинуто к «сейчас». Данные живут до остановки процесса.
+ * Акции - из очищенных сохранённых страниц src/tests/fixtures/freebies тем же путём, что в сервисе
+ * (ingestRawDeals: разбор, фильтр первого захода, дубли), время сдвинуто к «сейчас». Данные живут до остановки.
  *
- * Демо-вход (только для этого демо, в базе в памяти, в боевых данных его нет):
- *   логин:  demo_freebies
- *   пароль: Demo-S-JbZqXfDcR7
+ * Вход: логин demo_freebies, пароль случайный на каждый запуск, печатается в консоль при старте
+ * (учётная запись только в базе в памяти этого процесса).
  *
  * Адрес: http://127.0.0.1:3099 (порт из DEMO_PORT). Остановка: Ctrl+C.
  */
@@ -34,12 +33,12 @@ import { registerUser } from './db/usersRepo';
 import { hashPassword } from './utils/crypto';
 import { logger } from './utils/logger';
 import { IUserBotReader } from './modules/UserBotModule/IUserBotReader';
-import { extractDeals } from './modules/FreebiesModule/parse';
+import { ingestRawDeals } from './modules/FreebiesModule/ingest';
 import { SOURCES, sourceDefs } from './modules/FreebiesModule/sources';
 import { RawDeal } from './modules/FreebiesModule/types';
 
 const DEMO_USER = 'demo_freebies';
-const DEMO_PASSWORD = 'Demo-S-JbZqXfDcR7';
+const DEMO_PASSWORD = `Demo-${randomBytes(9).toString('base64url')}`;
 const FIXTURES: Record<string, string> = {
   'tg-promokodi-beauty': 'tme-promokodi-beauty.html',
   'tg-promokodi-goldapple': 'tme-promokodi-goldapple.html',
@@ -56,35 +55,44 @@ const fakeUserBot: IUserBotReader = {
   },
 };
 
+/** Сколько акций сохранено: сервисный путь ingestRawDeals без сети и без нейросети (classify не передаём). */
 async function seed(now: number): Promise<number> {
   await upsertSources(sourceDefs());
   const sources = await listSources();
   const db = await getDb();
+  const idOf = (key: string) => sources.find((s) => s.key === key)!.id;
   let saved = 0;
 
   for (const config of SOURCES) {
-    const sourceId = sources.find((s) => s.key === config.key)!.id;
     const html = fs.readFileSync(path.join(__dirname, 'tests', 'fixtures', 'freebies', FIXTURES[config.key]), 'utf8');
     const raws = config.adapter.parse(html, 'text/html');
     const newest = Math.max(...raws.map((r) => r.publishedAt ?? 0));
-    for (const raw of raws) {
-      // Самый свежий пост - три минуты назад, остальные раньше (пять суток сжаты примерно до шести часов).
-      const publishedAt = now - 180 - Math.min(Math.floor((newest - (raw.publishedAt ?? newest)) / 20), 6 * 3600);
-      for (const d of extractDeals({ ...raw, publishedAt }, config.defaults, now)) {
-        if (d.promoCode === null && d.discountText === null) continue;
-        if (await saveDeal({ ...d, sourceId, muted: false }, Math.min(now, publishedAt + 30))) saved++;
-      }
-    }
+    // Самый свежий пост - три минуты назад, остальные раньше (пять суток сжаты примерно до шести часов).
+    const shifted = raws.map((raw) => ({
+      ...raw,
+      publishedAt: now - 180 - Math.min(Math.floor((newest - (raw.publishedAt ?? newest)) / 20), 6 * 3600),
+    }));
+    saved += (await ingestRawDeals(idOf(config.key), shifted, config.defaults, false, now)).length;
   }
 
-  // Две акции, которые всегда живые: срок задан относительно «сейчас».
-  const live: RawDeal[] = [
-    { externalId: null, title: 'Демо: Золотое Яблоко', text: 'В Золотом Яблоке промокод `DEMOLIVE30`. -30% на уход, ещё 3 часа', url: 'https://t.me/demo/1', publishedAt: now - 120 },
-    { externalId: null, title: 'Демо: Wildberries', text: 'Кроссовки на WB со скидкой 55% по промокоду `KROSSDEMO`. Только сегодня', url: 'https://t.me/demo/2', publishedAt: now - 600 },
+  // Три демо-акции: две живые со сроком от «сейчас» и одна без кода, которая «могла закончиться»; каждая у своего источника.
+  const live: { key: string; raw: RawDeal }[] = [
+    {
+      key: 'tg-promokodi-goldapple',
+      raw: { externalId: null, title: 'Демо: Золотое Яблоко', text: 'В Золотом Яблоке промокод `DEMOLIVE30`. -30% на уход, ещё 3 часа', url: 'https://t.me/demo/1', publishedAt: now - 120 },
+    },
+    {
+      key: 'tg-wildberries',
+      raw: { externalId: null, title: 'Демо: Wildberries', text: 'Кроссовки на WB со скидкой 55% по промокоду `KROSSDEMO`. Только сегодня', url: 'https://t.me/demo/2', publishedAt: now - 600 },
+    },
+    {
+      key: 'tg-wildberries',
+      raw: { externalId: null, title: 'Демо: Wildberries без промокода', text: 'Пуховики на WB со скидкой 40% на всю коллекцию', url: 'https://t.me/demo/3', publishedAt: now - 2400 },
+    },
   ];
-  const wb = sources.find((s) => s.key === 'tg-wildberries')!.id;
-  for (const raw of live) {
-    for (const d of extractDeals(raw, {}, now)) if (await saveDeal({ ...d, sourceId: wb, muted: false }, raw.publishedAt!)) saved++;
+  for (const { key, raw } of live) {
+    const config = SOURCES.find((c) => c.key === key)!;
+    saved += (await ingestRawDeals(idOf(key), [raw], config.defaults, false, now)).length;
   }
 
   await db.execute({ sql: 'UPDATE deal_sources SET last_ok_at = ?, last_checked_at = ?, next_check_at = ?', args: [now, now, now + 3600] });
@@ -107,7 +115,8 @@ async function main() {
   const app = await createApp(fakeUserBot);
   const port = Number(process.env.DEMO_PORT) || 3099;
   const server = app.listen(port, '127.0.0.1', () => {
-    logger.info(`Демо халявы: http://127.0.0.1:${port} (акций ${saved}). Вход: ${DEMO_USER} / ${DEMO_PASSWORD}`);
+    logger.info(`Демо халявы: http://127.0.0.1:${port} (акций ${saved})`);
+    logger.info(`Вход: логин ${DEMO_USER}, пароль ${DEMO_PASSWORD} (новый на каждый запуск)`);
     logger.info('Без Telegram, бота, опроса источников и нейросети. Остановка: Ctrl+C');
   });
 
