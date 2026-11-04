@@ -31,24 +31,79 @@
     </div>
   </section>
 
+  <!-- ===== Первый вход: что показывать (профиль). Показывается, пока profile = null ===== -->
+  <section id="profileScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <h1>Что вам нужно?</h1>
+      <p class="app__subtitle">Выберите, что показывать. Потом это можно поменять: вверху страницы, в списке «Показывать».</p>
+      <button class="btn btn--primary btn--block" type="button" data-profile="news">Новости из каналов</button>
+      <button class="btn btn--primary btn--block" type="button" data-profile="freebies">Халява: акции и промокоды</button>
+      <button class="btn btn--primary btn--block" type="button" data-profile="both">И то и другое</button>
+      <div id="profileError" class="field__error" hidden></div>
+    </div>
+  </section>
+
   <div class="app" hidden>
     <header class="app__header">
       <h1>Telegram-алерты</h1>
-      <p class="app__subtitle">Поиск, мониторинг и алерты по Telegram-каналам</p>
+      <p class="app__subtitle">Новости из каналов и халява: акции и промокоды</p>
       <div class="app__account">
         <span id="accountUsername" class="app__account-name"></span>
+        <label class="app__profile">Показывать:
+          <select id="profileSelect" class="select">
+            <option value="news">Только новости</option>
+            <option value="freebies">Только халяву</option>
+            <option value="both">Новости и халяву</option>
+          </select>
+        </label>
         <button id="logoutBtn" class="btn btn--link" type="button">Выйти</button>
       </div>
     </header>
 
     <nav class="tabs" role="tablist">
-      <button class="tabs__btn is-active" data-tab="search" role="tab" aria-selected="true">Поиск</button>
+      <button class="tabs__btn is-active" data-tab="feed" role="tab" aria-selected="true">Лента</button>
+      <button class="tabs__btn" data-tab="freebies" role="tab" aria-selected="false">Халява</button>
+      <button class="tabs__btn" data-tab="search" role="tab" aria-selected="false">Поиск</button>
       <button class="tabs__btn" data-tab="channels" role="tab" aria-selected="false">Каналы <span id="channelsCount" class="tabs__badge"></span></button>
       <button class="tabs__btn" data-tab="alerts" role="tab" aria-selected="false">Алерты</button>
     </nav>
 
+    <!-- ===== Вкладка "Лента": посты каналов и акции вместе ===== -->
+    <section id="tab-feed" class="tab is-active">
+      <p class="banner banner--warn mock-note" hidden>Показаны примеры: настоящая лента ещё не подключена.</p>
+      <div class="toolbar">
+        <div id="feedSwitcher" class="chips" role="radiogroup" aria-label="Что показывать в ленте"></div>
+        <button id="feedRefreshBtn" class="btn btn--secondary" type="button">Обновить</button>
+      </div>
+      <p id="feedUpdated" class="field__hint field__hint--list"></p>
+      <div id="feedError" class="banner banner--error" hidden></div>
+      <div id="feedList" class="items-list"></div>
+      <div id="feedEmpty" class="empty-state" hidden></div>
+    </section>
+
+    <!-- ===== Вкладка "Халява": акции магазинов и их настройки ===== -->
+    <section id="tab-freebies" class="tab">
+      <p class="banner banner--warn mock-note" hidden>Показаны примеры: настоящие акции ещё не подключены.</p>
+      <p class="field__hint field__hint--list">Акции магазинов за последние сутки. Посты каналов — во вкладке «Каналы» и в общей «Ленте».</p>
+      <div id="storeFilter" class="chips field" role="radiogroup" aria-label="Магазин"></div>
+      <div id="dealsError" class="banner banner--error" hidden></div>
+      <div id="dealsList" class="items-list"></div>
+      <div id="dealsEmpty" class="empty-state" hidden>Подходящих акций за сутки пока нет. Они появляются сами, загляните позже.</div>
+
+      <div class="section-divider"></div>
+      <h2 class="section-title">Настройки халявы</h2>
+      <div id="freebiesSettings"></div>
+
+      <div class="actions">
+        <button id="frPreviewBtn" class="btn btn--secondary" type="button">Проверить сейчас</button>
+        <span id="frPreviewStatus" class="actions__status" role="status"></span>
+      </div>
+      <p class="field__hint">Показывает, какие акции за последний час пришли бы вам в Telegram. Ничего не отправляет.</p>
+      <div id="frPreviewOut"></div>
+    </section>
+
     <!-- ===== Вкладка "Поиск" ===== -->
-    <section id="tab-search" class="tab is-active">
+    <section id="tab-search" class="tab">
 
       <div class="field">
         <label class="field__label">За какое время смотреть</label>
@@ -211,5 +266,7 @@
   </div>
 
   <script src="/app.js"></script>
+  <script src="/freebies-mock.js"></script>
+  <script src="/freebies.js"></script>
 </body>
 </html>

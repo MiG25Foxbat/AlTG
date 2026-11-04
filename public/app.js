@@ -59,6 +59,7 @@ function showApp(username) {
   document.getElementById('authScreen').hidden = true;
   document.querySelector('.app').hidden = false;
   document.getElementById('accountUsername').textContent = username;
+  window.initFreebies?.(); // freebies.js: профиль, лента, вкладка «Халява»
 }
 
 function setAuthMode(mode) {

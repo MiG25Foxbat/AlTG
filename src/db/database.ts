@@ -219,6 +219,63 @@ async function initDb(): Promise<Client> {
     ],
     'write'
   );
+  // Халява (docs/freebies/CONTRACT.md, раздел 2). Новые колонки потом только через ensureColumn.
+  await db.batch(
+    [
+      `CREATE TABLE IF NOT EXISTS deal_sources (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        key              TEXT NOT NULL UNIQUE,
+        kind             TEXT NOT NULL,
+        title            TEXT NOT NULL,
+        url              TEXT NOT NULL,
+        site_url         TEXT NOT NULL,
+        interval_sec     INTEGER NOT NULL,
+        is_active        INTEGER NOT NULL DEFAULT 1,
+        fail_count       INTEGER NOT NULL DEFAULT 0,
+        disabled_reason  TEXT,
+        etag             TEXT,
+        last_modified    TEXT,
+        next_check_at    INTEGER NOT NULL DEFAULT 0,
+        last_checked_at  INTEGER,
+        last_ok_at       INTEGER
+      )`,
+      // dedup_key UNIQUE + INSERT OR IGNORE — защита от дублей; muted = 1 — сохранена без рассылки.
+      `CREATE TABLE IF NOT EXISTS deals (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id         INTEGER NOT NULL REFERENCES deal_sources(id) ON DELETE CASCADE,
+        dedup_key         TEXT NOT NULL UNIQUE,
+        store             TEXT NOT NULL,
+        category          TEXT NOT NULL,
+        title             TEXT NOT NULL,
+        url               TEXT NOT NULL,
+        promo_code        TEXT,
+        discount_percent  INTEGER,
+        discount_text     TEXT,
+        expires_at        INTEGER,
+        published_at      INTEGER NOT NULL,
+        found_at          INTEGER NOT NULL,
+        muted             INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_deals_found ON deals(found_at)`,
+      `CREATE TABLE IF NOT EXISTS freebies_settings (
+        user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        settings_json  TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL
+      )`,
+      // status: 'queued' ушло в outbox, 'held' ждёт hold_until, 'skipped' устарела, пока ждала.
+      `CREATE TABLE IF NOT EXISTS deal_deliveries (
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        deal_id     INTEGER NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+        status      TEXT NOT NULL,
+        hold_until  INTEGER,
+        created_at  INTEGER NOT NULL,
+        queued_at   INTEGER,
+        PRIMARY KEY (user_id, deal_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_deal_deliveries_held ON deal_deliveries(status, hold_until)`,
+    ],
+    'write'
+  );
   await ensureColumn(db, 'user_channels', 'group_id', 'INTEGER REFERENCES channel_groups(id) ON DELETE SET NULL');
   // Подписка = строка topics (тема) + свои настройки. settings_json NULL = дефолты.
   await ensureColumn(db, 'topics', 'settings_json', 'TEXT');

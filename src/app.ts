@@ -26,7 +26,19 @@ import {
   disconnectAccount,
   listPrivateDialogs,
 } from './modules/UserBotModule/personalAccount';
-import { analyzeTopic } from './modules/AiModule/analyzeService';
+import { analyzeTopic, loadUnifiedPosts, toLink } from './modules/AiModule/analyzeService';
+import {
+  STORES,
+  CATEGORIES,
+  STORE_LABELS,
+  CATEGORY_LABELS,
+  FeedItem,
+  getFreebiesSettings,
+  updateFreebiesSettings,
+  listRecentDeals,
+  listSources,
+} from './db/dealsRepo';
+import { freebiesStats } from './modules/FreebiesModule/stats';
 import { LlmConfigError, LlmQuotaError } from './modules/AiModule/llmClient';
 import { InvalidTimeWindowError, TIME_WINDOW_OPTIONS } from './utils/time';
 import { IUserBotReader } from './modules/UserBotModule/IUserBotReader';
@@ -38,6 +50,7 @@ interface AuthedRequest extends Request {
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,32}$/;
 const MIN_PASSWORD_LENGTH = 8;
+const DAY_SEC = 86400;
 
 function validateCredentials(username: unknown, password: unknown): string | null {
   if (typeof username !== 'string' || !USERNAME_PATTERN.test(username)) {
@@ -391,6 +404,102 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
       return res.status(400).json({ error: 'Добавьте хотя бы одну активную тему' });
     }
     res.json({ results });
+  });
+
+  // --- Халява (docs/freebies/CONTRACT.md, раздел 3) ---
+
+  const queryLimit = (raw: unknown): number | null => {
+    if (raw === undefined) return 50;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : null;
+  };
+  const queryCode = <T extends string>(raw: unknown, allowed: readonly T[]): T | null | undefined =>
+    raw === undefined ? undefined : (allowed as readonly string[]).includes(String(raw)) ? (raw as T) : null;
+
+  app.get('/api/freebies/deals', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const limit = queryLimit(req.query.limit);
+    const store = queryCode(req.query.store, STORES);
+    const category = queryCode(req.query.category, CATEGORIES);
+    if (limit === null) return res.status(400).json({ error: 'limit: целое число от 1 до 100' });
+    if (store === null) return res.status(400).json({ error: 'Неизвестный магазин' });
+    if (category === null) return res.status(400).json({ error: 'Неизвестная категория' });
+    const now = Math.floor(Date.now() / 1000);
+    const deals = await listRecentDeals(
+      now - DAY_SEC,
+      { stores: store ? [store] : undefined, categories: category ? [category] : undefined },
+      limit,
+      now
+    );
+    res.json({ deals });
+  });
+
+  app.get('/api/feed', requireAuth, async (req: AuthedRequest, res: Response) => {
+    const kind = req.query.kind === undefined ? 'all' : String(req.query.kind);
+    const limit = queryLimit(req.query.limit);
+    if (!['all', 'channels', 'freebies'].includes(kind)) return res.status(400).json({ error: 'kind: all, channels или freebies' });
+    if (limit === null) return res.status(400).json({ error: 'limit: целое число от 1 до 100' });
+    const now = Math.floor(Date.now() / 1000);
+    const since = now - DAY_SEC;
+    const items: FeedItem[] = [];
+    if (kind !== 'freebies') {
+      const posts = await loadUnifiedPosts(req.userId!, since);
+      for (const p of posts.slice(0, limit)) {
+        items.push({
+          kind: 'post',
+          id: `post:${p.channel}:${p.messageId}`,
+          at: p.postedAt,
+          title: p.channel,
+          text: p.text.slice(0, 500),
+          link: toLink(p.channel, p.messageId, p.isPrivate),
+          sourceLabel: p.channel,
+        });
+      }
+    }
+    if (kind !== 'channels') {
+      const s = await getFreebiesSettings(req.userId!);
+      for (const deal of await listRecentDeals(since, s, limit, now)) {
+        items.push({
+          kind: 'deal',
+          id: `deal:${deal.id}`,
+          at: deal.foundAt,
+          title: STORE_LABELS[deal.store],
+          text: deal.title.slice(0, 500),
+          link: deal.url,
+          sourceLabel: deal.sourceTitle,
+          deal,
+        });
+      }
+    }
+    items.sort((a, b) => b.at - a.at);
+    res.json({ items: items.slice(0, limit) });
+  });
+
+  app.get('/api/freebies/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
+    res.json({
+      settings: await getFreebiesSettings(req.userId!),
+      stores: STORES.map((code) => ({ code, label: STORE_LABELS[code] })),
+      categories: CATEGORIES.map((code) => ({ code, label: CATEGORY_LABELS[code] })),
+    });
+  });
+
+  app.patch('/api/freebies/settings', requireAuth, async (req: AuthedRequest, res: Response) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'Нужен объект с настройками' });
+    }
+    res.json({ settings: await updateFreebiesSettings(req.userId!, req.body, Math.floor(Date.now() / 1000)) });
+  });
+
+  app.get('/api/freebies/sources', requireAuth, async (_req: AuthedRequest, res: Response) => {
+    const sources = (await listSources()).map((s) => ({
+      key: s.key,
+      title: s.title,
+      siteUrl: s.siteUrl,
+      kind: s.kind,
+      isActive: s.isActive,
+      disabledReason: s.disabledReason,
+      lastOkAt: s.lastOkAt,
+    }));
+    res.json({ sources, llmCalls: freebiesStats.llmCalls });
   });
 
   // --- Настройки для интерфейса (публично — статичный список, не тянет вход) ---
