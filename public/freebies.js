@@ -35,17 +35,6 @@
     return min < 1440 ? `${Math.floor(min / 60)} ч назад` : `${Math.floor(min / 1440)} дн назад`;
   }
 
-  // Пока адрес не готов (404), берём примеры из freebies-mock.js и говорим об этом на странице.
-  async function fapi(path, options) {
-    try {
-      return await api(path, options);
-    } catch (error) {
-      if (!window.freebiesMock || !/\(404\)/.test(error.message)) throw error;
-      document.querySelectorAll('.mock-note').forEach((n) => (n.hidden = false));
-      return window.freebiesMock(path, options);
-    }
-  }
-
   const chip = (text, selected, onclick) =>
     el('button', { class: 'chip' + (selected ? ' is-selected' : ''), type: 'button', role: 'radio', 'aria-checked': String(selected), onclick }, text);
 
@@ -117,7 +106,7 @@
 
   async function chooseProfile(profile) {
     try {
-      const { settings } = await fapi('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify({ profile }) });
+      const { settings } = await api('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify({ profile }) });
       fr.settings = settings;
       fr.kind = profile === 'freebies' ? 'freebies' : 'all';
       if (profile === 'news' && byId('tab-freebies').classList.contains('is-active')) switchTab('feed');
@@ -144,7 +133,7 @@
     const kind = feedKind();
     showBanner('feedError', '');
     try {
-      const { items } = await fapi(`/api/feed?kind=${kind}&limit=50`);
+      const { items } = await api(`/api/feed?kind=${kind}&limit=50`);
       byId('feedList').replaceChildren(...items.map((i) => (i.kind === 'deal' && i.deal ? dealCard(i.deal) : postCard(i))));
       byId('feedEmpty').textContent = FEED_EMPTY[kind];
       byId('feedEmpty').hidden = items.length > 0;
@@ -157,7 +146,7 @@
   // ---------- вкладка «Халява» ----------
 
   async function loadSettings() {
-    const data = await fapi('/api/freebies/settings');
+    const data = await api('/api/freebies/settings');
     fr.settings = data.settings;
     fr.stores = data.stores;
     fr.categories = data.categories;
@@ -169,7 +158,7 @@
     );
     showBanner('dealsError', '');
     try {
-      const { deals } = await fapi(`/api/freebies/deals?limit=50${fr.store ? `&store=${encodeURIComponent(fr.store)}` : ''}`);
+      const { deals } = await api(`/api/freebies/deals?limit=50${fr.store ? `&store=${encodeURIComponent(fr.store)}` : ''}`);
       byId('dealsList').replaceChildren(...deals.map(dealCard));
       byId('dealsEmpty').hidden = deals.length > 0;
     } catch (error) {
@@ -268,7 +257,7 @@
       clearTimeout(timer);
       timer = setTimeout(async () => {
         try {
-          const { settings } = await fapi('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify(readSettings(form)) });
+          const { settings } = await api('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify(readSettings(form)) });
           fr.settings = settings;
           form.querySelector('[data-f="minDiscount"]').value = settings.minDiscount;
           form.querySelector('[data-f="maxPerDay"]').value = settings.maxPerDay;
@@ -299,7 +288,7 @@
     button.disabled = true;
     button.textContent = 'Проверяю…';
     try {
-      const { results, alertsEnabled, botLinked } = await fapi('/api/freebies/preview', { method: 'POST', body: JSON.stringify({ minutes: 60 }) });
+      const { results, alertsEnabled, botLinked } = await api('/api/freebies/preview', { method: 'POST', body: JSON.stringify({ minutes: 60 }) });
       const notes = [];
       if (!alertsEnabled) notes.push('Алерты халявы выключены: на самом деле ничего не придёт.');
       if (!botLinked) notes.push('Бот не привязан: отправлять некуда.');
