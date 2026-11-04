@@ -20,7 +20,7 @@
     muted: 'Нашлась при первой проверке источника, такие не рассылаем',
   };
 
-  const safeHref = (url) => (/^https?:\/\//i.test(url) ? url : '#');
+  const safeHref = (url) => (/^https?:\/\//i.test(url) ? url : null);
   const labelOf = (list, code) => (list.find((x) => x.code === code) || {}).label || code;
   const clock = () => new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   const showBanner = (id, message) => {
@@ -58,7 +58,9 @@
     ]);
   }
 
-  const sourceLink = (url, text) => el('a', { class: 'item-card__link', href: safeHref(url), target: '_blank', rel: 'noopener', text });
+  // Ссылка только если адрес настоящий http(s); иначе просто текст.
+  const sourceLink = (url, text) =>
+    safeHref(url) ? el('a', { class: 'item-card__link', href: url, target: '_blank', rel: 'noopener', text }) : el('span', { text });
 
   function postCard(item) {
     return el('div', { class: 'item-card' }, [
@@ -96,7 +98,7 @@
       ]),
       el('div', { class: 'item-card__foot' }, [
         el('span', {}, ['Откуда: ', sourceLink(deal.sourceUrl, deal.sourceTitle)]),
-        el('a', { class: 'btn btn--primary btn--small', href: safeHref(deal.url), target: '_blank', rel: 'noopener' }, 'Открыть'),
+        safeHref(deal.url) ? el('a', { class: 'btn btn--primary btn--small', href: deal.url, target: '_blank', rel: 'noopener' }, 'Открыть') : null,
       ]),
     ]);
   }
@@ -177,6 +179,7 @@
 
   async function loadBotHint() {
     const status = byId('frBotStatus');
+    if (!status) return; // настройки ещё не нарисованы
     try {
       const bot = await api('/api/alerts/bot');
       const ok = bot.configured && bot.linked && bot.status === 'active';
@@ -282,11 +285,11 @@
     try {
       await loadSettings();
       renderSettings();
+      loadBotHint(); // только когда есть #frBotStatus
     } catch (error) {
       showBanner('dealsError', error.message);
     }
     loadDeals();
-    loadBotHint();
   }
 
   async function runPreview(event) {

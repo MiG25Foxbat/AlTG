@@ -1,7 +1,8 @@
 import { Bot, Context, webhookCallback } from 'grammy';
 import type { InlineKeyboardMarkup } from 'grammy/types';
 import type { RequestHandler } from 'express';
-import { handleStart, handleCallback, topicsView, pauseView, BotView } from './botActions';
+import { handleStart, handleCallback, topicsView, pauseView, BotView, CallbackOutcome } from './botActions';
+import { freebiesView, handleFreebiesCallback } from './dealBot';
 import { getLinkByChat, setPrivateChatStatus } from '../../db/destinationsRepo';
 import { logger } from '../../utils/logger';
 
@@ -26,6 +27,18 @@ const options = (view: BotView) => ({
   link_preview_options: { is_disabled: true },
 });
 const NOT_LINKED = 'Бот ещё не привязан к вашему аккаунту на сайте — нажмите /start.';
+
+/** Ответ на нажатие кнопки: всплывашка, замена сообщения, новое сообщение. Общий для tp:/pz:/fb: и fr:. */
+async function sendOutcome(ctx: Context, outcome: CallbackOutcome) {
+  await ctx.answerCallbackQuery(outcome.toast ? { text: outcome.toast } : undefined);
+  if (outcome.edit) {
+    await ctx.editMessageText(outcome.edit.text, options(outcome.edit)).catch((error) => {
+      // «message is not modified» — повторное нажатие той же кнопки, не ошибка
+      if (!/not modified/.test(String(error?.description))) throw error;
+    });
+  }
+  if (outcome.reply) await ctx.reply(outcome.reply.text, options(outcome.reply));
+}
 
 /**
  * Общий бот алертов (grammY). Режим — BOT_MODE: webhook (Render — входящий
@@ -56,6 +69,15 @@ export async function createAlertBot(token: string): Promise<AlertBot> {
   );
 
   bot.command(
+    'freebies',
+    privateOnly(async (ctx) => {
+      const link = await getLinkByChat(ctx.chat!.id);
+      const view = link ? await freebiesView(link.userId) : { text: NOT_LINKED };
+      await ctx.reply(view.text, options(view));
+    })
+  );
+
+  bot.command(
     'pause',
     privateOnly(async (ctx) => {
       const link = await getLinkByChat(ctx.chat!.id);
@@ -75,18 +97,17 @@ export async function createAlertBot(token: string): Promise<AlertBot> {
     })
   );
 
+  // Кнопки халявы (fr:) обрабатываются здесь и дальше не идут: без next(), общий обработчик их не увидит.
+  bot.callbackQuery(/^fr:/, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId || ctx.chat?.type !== 'private') return ctx.answerCallbackQuery();
+    await sendOutcome(ctx, await handleFreebiesCallback(chatId, ctx.callbackQuery.data, nowSec()));
+  });
+
   bot.on('callback_query:data', async (ctx) => {
     const chatId = ctx.chat?.id;
     if (!chatId || ctx.chat?.type !== 'private') return ctx.answerCallbackQuery();
-    const outcome = await handleCallback(chatId, ctx.callbackQuery.data, nowSec());
-    await ctx.answerCallbackQuery(outcome.toast ? { text: outcome.toast } : undefined);
-    if (outcome.edit) {
-      await ctx.editMessageText(outcome.edit.text, options(outcome.edit)).catch((error) => {
-        // «message is not modified» — повторное нажатие той же кнопки, не ошибка
-        if (!/not modified/.test(String(error?.description))) throw error;
-      });
-    }
-    if (outcome.reply) await ctx.reply(outcome.reply.text, options(outcome.reply));
+    await sendOutcome(ctx, await handleCallback(chatId, ctx.callbackQuery.data, nowSec()));
   });
 
   // Пользователь заблокировал/разблокировал бота — не слать зря (ТЗ п. 4).
@@ -102,6 +123,7 @@ export async function createAlertBot(token: string): Promise<AlertBot> {
   await bot.init();
   await bot.api.setMyCommands([
     { command: 'topics', description: 'Темы: вкл/выкл, частота, звук' },
+    { command: 'freebies', description: 'Халява: акции, магазины, ночной режим' },
     { command: 'pause', description: 'Пауза на час или до утра' },
     { command: 'settings', description: 'Все настройки на сайте' },
     { command: 'start', description: 'Привязать бота к аккаунту' },
