@@ -79,6 +79,27 @@ test('настройки: нет строки - дефолты, patch меняе
   assert.deepEqual(await getFreebiesSettings(userId), DEFAULT_FREEBIES_SETTINGS);
 });
 
+test('PATCH с неверным значением оставляет текущее, а не сбрасывает в дефолт; разные пользователи не видят настроек друг друга', async () => {
+  const a = await newUser();
+  const b = await newUser();
+  await updateFreebiesSettings(a, { alertsEnabled: true, minDiscount: 40, stores: ['wildberries'], quietFrom: '22:00', profile: 'both' }, NOW);
+  const after = await updateFreebiesSettings(a, { alertsEnabled: 'да', minDiscount: 'много', stores: 'все', quietFrom: '99:99', profile: 'чужой' }, NOW + 1);
+  assert.equal(after.alertsEnabled, true);
+  assert.equal(after.minDiscount, 40);
+  assert.deepEqual(after.stores, ['wildberries']);
+  assert.equal(after.quietFrom, '22:00');
+  assert.equal(after.profile, 'both');
+  assert.equal((await updateFreebiesSettings(a, { profile: null }, NOW + 2)).profile, null); // null - осознанный сброс
+  // Пользователь B остался на дефолтах, его PATCH не трогает A.
+  assert.deepEqual(await getFreebiesSettings(b), DEFAULT_FREEBIES_SETTINGS);
+  await updateFreebiesSettings(b, { minDiscount: 10, onlyWithPromo: true }, NOW + 3);
+  assert.equal((await getFreebiesSettings(a)).minDiscount, 40);
+  assert.equal((await getFreebiesSettings(a)).onlyWithPromo, false);
+  assert.equal((await getFreebiesSettings(b)).minDiscount, 10);
+  const db = await getDb();
+  assert.equal(Number((await db.execute('SELECT COUNT(*) AS n FROM freebies_settings')).rows[0].n) >= 2, true);
+});
+
 test('dedupKey: промокод без учёта регистра; без промокода - адрес без query и #, заголовок обрезан', () => {
   assert.equal(dedupKey('goldapple', 'primer30', 'https://a.ru/x', 'любой'), 'goldapple|PRIMER30');
   const a = dedupKey('wildberries', null, 'https://wb.ru/p?utm=1#a', '  Кроссовки   СО скидкой ');
@@ -113,6 +134,14 @@ test('saveDeal: дубль по dedup_key не вставляется, мусо�
   assert.equal(first.url, 'https://goldapple.ru/promo?utm=1#x');
   assert.equal(first.sourceTitle, 'Тест');
   assert.equal(first.status, 'live');
+});
+
+test('saveDeal: HTML в заголовке и в тексте скидки вырезается', async () => {
+  const sourceId = (await listSources())[0].id;
+  const id = await saveDeal(deal(sourceId, { promoCode: 'CLEAN1', title: '<b>Жирно</b> <script>x()</script>', discountText: '<img src=x onerror=1>-30%  <i>тут</i>' }), NOW);
+  const saved = (await listRecentDeals(0, {}, 50, NOW)).find((d) => d.id === id)!;
+  assert.equal(saved.title, 'Жирно x()');
+  assert.equal(saved.discountText, '-30% тут');
 });
 
 test('listRecentDeals: фильтры по магазину и категории, since, limit; уборка старше 7 дней', async () => {

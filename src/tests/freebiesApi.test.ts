@@ -52,16 +52,33 @@ test('HTTP API халявы: вход, лента, акции, настройк�
     const now = Math.floor(Date.now() / 1000);
     await upsertSources([{ key: 'pepper', kind: 'rss', title: 'Pepper.ru', url: 'https://example.org/rss', siteUrl: 'https://example.org/', intervalSec: 300 }]);
     const sourceId = (await listSources())[0].id;
-    const base = { sourceId, discountText: null, expiresAt: null, muted: false, publishedAt: now - 60 };
-    await saveDeal({ ...base, store: 'goldapple', category: 'beauty', title: 'Минус 30%', url: 'https://goldapple.ru/a', promoCode: 'GA30', discountPercent: 30 }, now - 30);
-    await saveDeal({ ...base, store: 'wildberries', category: 'pets', title: 'Корм со скидкой', url: 'https://wb.ru/b', promoCode: null, discountPercent: 40 }, now - 10);
-    await saveDeal({ ...base, store: 'ozon', category: 'other', title: 'Вчерашняя', url: 'https://ozon.ru/c', promoCode: 'OLD1', discountPercent: 5 }, now - 2 * 86400);
+    const base = { sourceId, discountText: null, expiresAt: null, muted: false };
+    await saveDeal({ ...base, publishedAt: now - 30, store: 'goldapple', category: 'beauty', title: 'Минус 30%', url: 'https://goldapple.ru/a', promoCode: 'GA30', discountPercent: 30 }, now - 30);
+    await saveDeal({ ...base, publishedAt: now - 10, store: 'wildberries', category: 'pets', title: 'Корм со скидкой', url: 'https://wb.ru/b', promoCode: null, discountPercent: 40 }, now - 10);
+    await saveDeal({ ...base, publishedAt: now - 2 * 86400, store: 'ozon', category: 'other', title: 'Вчерашняя', url: 'https://ozon.ru/c', promoCode: 'OLD1', discountPercent: 5 }, now - 2 * 86400);
     assert.equal((await api('/api/channels', { method: 'POST', body: JSON.stringify({ username: 'testchannel' }) })).status, 201);
     const db = await getDb();
     await db.execute({
       sql: 'INSERT INTO public_posts (channel_username, message_id, text, posted_at, fetched_at) VALUES (?, ?, ?, ?, ?)',
       args: ['@testchannel', 7, 'Пост канала', now - 20, now],
     });
+
+    // Приватный канал: виден в ленте, пока личная сессия жива, и пропадает, когда ей нужен повторный вход.
+    const me = (await api('/api/me')).body;
+    await db.execute({ sql: `INSERT INTO user_channels (user_id, channel_identifier, is_private, added_at) VALUES (?, '-100777', 1, 0)`, args: [me.id] });
+    await db.execute({
+      sql: `INSERT INTO private_posts (user_id, channel_identifier, message_id, text, posted_at, fetched_at) VALUES (?, '-100777', 5, 'Закрытый пост', ?, ?)`,
+      args: [me.id, now - 40, now],
+    });
+    assert.ok(ids(await api('/api/feed?kind=channels')).includes('post:-100777:5'));
+    await db.execute({
+      sql: `INSERT INTO telegram_accounts (user_id, telegram_user_id, phone_number_encrypted, session_string_encrypted, session_status, connected_at)
+            VALUES (?, 555, 'x', 'x', 'needs_reauth', 0)`,
+      args: [me.id],
+    });
+    assert.ok(!ids(await api('/api/feed?kind=channels')).includes('post:-100777:5'));
+    await db.execute({ sql: 'DELETE FROM telegram_accounts WHERE user_id = ?', args: [me.id] });
+    await db.execute({ sql: `DELETE FROM user_channels WHERE channel_identifier = '-100777'`, args: [] });
 
     const deals = await api('/api/freebies/deals');
     assert.equal(deals.status, 200);
@@ -75,7 +92,9 @@ test('HTTP API халявы: вход, лента, акции, настройк�
     }
 
     const all = await api('/api/feed?kind=all');
-    assert.deepEqual(ids(all), ['deal:2', 'post:@testchannel:7', 'deal:1']); // склеены по времени
+    // Склеены по времени; у акции время - publishedAt, как в карточке «N мин назад».
+    assert.deepEqual(ids(all), ['deal:2', 'post:@testchannel:7', 'deal:1']);
+    assert.equal(all.body.items[0].at, all.body.items[0].deal.publishedAt);
     const post = all.body.items.find((i: any) => i.kind === 'post');
     assert.equal(post.link, 'https://t.me/testchannel/7');
     assert.equal(post.deal, undefined);

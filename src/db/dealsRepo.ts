@@ -118,28 +118,34 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
-function pickCodes<T extends string>(value: unknown, allowed: readonly T[]): T[] {
-  return Array.isArray(value) ? allowed.filter((code) => value.includes(code)) : [];
+function pickCodes<T extends string>(value: unknown, allowed: readonly T[], fallback: T[]): T[] {
+  return Array.isArray(value) ? allowed.filter((code) => value.includes(code)) : fallback;
 }
 
-/** Граница доверия: из запроса и БД берём только известные поля с допустимыми значениями. */
-export function sanitizeFreebiesSettings(input: unknown): FreebiesSettings {
-  const d = DEFAULT_FREEBIES_SETTINGS;
+/**
+ * Граница доверия: из запроса и БД берём только известные поля с допустимыми значениями.
+ * Неверное или пропущенное значение заменяется значением из base (по умолчанию - дефолты;
+ * при PATCH - текущие настройки пользователя, чтобы мусор не сбрасывал их).
+ */
+export function sanitizeFreebiesSettings(input: unknown, base: FreebiesSettings = DEFAULT_FREEBIES_SETTINGS): FreebiesSettings {
   const src: any = input && typeof input === 'object' ? input : {};
-  const bool = (v: unknown, fallback: boolean) => (v === undefined ? fallback : v === true);
+  const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
   const time = (v: unknown, fallback: string) => (typeof v === 'string' && TIME_RE.test(v) ? v : fallback);
   return {
-    profile: src.profile === 'news' || src.profile === 'freebies' || src.profile === 'both' ? src.profile : null,
-    alertsEnabled: bool(src.alertsEnabled, d.alertsEnabled),
-    stores: pickCodes(src.stores, STORES),
-    categories: pickCodes(src.categories, CATEGORIES),
-    onlyWithPromo: bool(src.onlyWithPromo, d.onlyWithPromo),
-    minDiscount: clampInt(src.minDiscount, 0, 90, d.minDiscount),
-    breakQuiet: bool(src.breakQuiet, d.breakQuiet),
-    quietEnabled: bool(src.quietEnabled, d.quietEnabled),
-    quietFrom: time(src.quietFrom, d.quietFrom),
-    quietTo: time(src.quietTo, d.quietTo),
-    maxPerDay: clampInt(src.maxPerDay, 1, 100, d.maxPerDay),
+    profile:
+      src.profile === 'news' || src.profile === 'freebies' || src.profile === 'both' || src.profile === null
+        ? src.profile
+        : base.profile,
+    alertsEnabled: bool(src.alertsEnabled, base.alertsEnabled),
+    stores: pickCodes(src.stores, STORES, base.stores),
+    categories: pickCodes(src.categories, CATEGORIES, base.categories),
+    onlyWithPromo: bool(src.onlyWithPromo, base.onlyWithPromo),
+    minDiscount: clampInt(src.minDiscount, 0, 90, base.minDiscount),
+    breakQuiet: bool(src.breakQuiet, base.breakQuiet),
+    quietEnabled: bool(src.quietEnabled, base.quietEnabled),
+    quietFrom: time(src.quietFrom, base.quietFrom),
+    quietTo: time(src.quietTo, base.quietTo),
+    maxPerDay: clampInt(src.maxPerDay, 1, 100, base.maxPerDay),
   };
 }
 
@@ -161,7 +167,7 @@ export async function getFreebiesSettings(userId: number): Promise<FreebiesSetti
 export async function updateFreebiesSettings(userId: number, patch: unknown, now: number): Promise<FreebiesSettings> {
   const current = await getFreebiesSettings(userId);
   const part = patch && typeof patch === 'object' ? patch : {};
-  const next = sanitizeFreebiesSettings({ ...current, ...part });
+  const next = sanitizeFreebiesSettings(part, current);
   const db = await getDb();
   await db.execute({
     sql: `INSERT INTO freebies_settings (user_id, settings_json, updated_at) VALUES (?, ?, ?)
@@ -178,9 +184,9 @@ export function dealStatus(publishedAt: number, expiresAt: number | null, now: n
   return now - publishedAt > DEAL_FRESH_SEC ? 'maybe_over' : 'live';
 }
 
-/** Заголовок без HTML и лишних пробелов, не длиннее 200 символов. */
-export function cleanTitle(title: string): string {
-  return String(title).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+/** Текст без HTML и лишних пробелов, по умолчанию как заголовок: не длиннее 200 символов. */
+export function cleanTitle(title: string, max = 200): string {
+  return String(title).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
 /** Только http и https; query и #-часть в ключе дубля не участвуют. */
@@ -245,7 +251,7 @@ export async function saveDeal(deal: NewDeal, now: number): Promise<number | nul
       url.toString(),
       promo,
       percent,
-      deal.discountText ? deal.discountText.slice(0, 100) : null,
+      cleanTitle(deal.discountText ?? '', 100) || null,
       deal.expiresAt,
       deal.publishedAt ?? now,
       now,
@@ -369,4 +375,57 @@ export async function listSources(): Promise<Source[]> {
   const db = await getDb();
   const r = await db.execute('SELECT * FROM deal_sources ORDER BY id');
   return (r.rows as any[]).map(sourceFromRow);
+}
+
+/** Активные источники, которым пора на проверку, самые давние первыми. */
+export async function listDueSources(now: number): Promise<Source[]> {
+  const db = await getDb();
+  const r = await db.execute({
+    sql: 'SELECT * FROM deal_sources WHERE is_active = 1 AND next_check_at <= ? ORDER BY next_check_at, id',
+    args: [now],
+  });
+  return (r.rows as any[]).map(sourceFromRow);
+}
+
+/** Успешная проверка (в том числе 304 и пустой разбор): сбрасывает ошибки, ставит last_ok_at. */
+export async function markSourceOk(
+  id: number,
+  now: number,
+  nextCheckAt: number,
+  etag: string | null,
+  lastModified: string | null
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `UPDATE deal_sources SET fail_count = 0, last_ok_at = ?, last_checked_at = ?, next_check_at = ?,
+            etag = COALESCE(?, etag), last_modified = COALESCE(?, last_modified) WHERE id = ?`,
+    args: [now, now, nextCheckAt, etag, lastModified, id],
+  });
+}
+
+/** Неудачная проверка; на maxFails подряд источник отключается сам. Возвращает true, если отключили. */
+export async function markSourceFailed(id: number, now: number, nextCheckAt: number, maxFails: number): Promise<boolean> {
+  const db = await getDb();
+  await db.execute({
+    sql: `UPDATE deal_sources SET fail_count = fail_count + 1, last_checked_at = ?, next_check_at = ?,
+            is_active = CASE WHEN fail_count + 1 >= ? THEN 0 ELSE is_active END,
+            disabled_reason = CASE WHEN fail_count + 1 >= ? THEN 'errors' ELSE disabled_reason END WHERE id = ?`,
+    args: [now, nextCheckAt, maxFails, maxFails, id],
+  });
+  const r = await db.execute({ sql: 'SELECT is_active FROM deal_sources WHERE id = ?', args: [id] });
+  return (r.rows[0] as any)?.is_active === 0;
+}
+
+/** Отложить проверку, не засчитывая неудачу (повтор через 5/30 с, 429). */
+export async function deferSource(id: number, now: number, nextCheckAt: number): Promise<void> {
+  const db = await getDb();
+  await db.execute({ sql: 'UPDATE deal_sources SET last_checked_at = ?, next_check_at = ? WHERE id = ?', args: [now, nextCheckAt, id] });
+}
+
+export async function disableSource(id: number, reason: 'robots' | 'errors' | 'manual', now: number): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: 'UPDATE deal_sources SET is_active = 0, disabled_reason = ?, last_checked_at = ? WHERE id = ?',
+    args: [reason, now, id],
+  });
 }

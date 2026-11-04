@@ -13,7 +13,7 @@ import { listGroups, createGroup, updateGroup, deleteGroup, setChannelGroup, nor
 import { listTopics, addTopic, updateTopic, deleteTopic } from './db/alertsRepo';
 import { previewAlerts } from './modules/AlertModule/scheduler';
 import { findUserByUsername, registerUser, getUserById, UsernameTakenError } from './db/usersRepo';
-import { hasAccount as hasTelegramAccount } from './db/telegramAccountsRepo';
+import { hasAccount as hasTelegramAccount, getSessionStatus } from './db/telegramAccountsRepo';
 import { createLinkToken, getLinkByUser } from './db/destinationsRepo';
 import { WEBHOOK_PATH } from './modules/BotModule/bot';
 import { hashPassword, verifyPassword } from './utils/crypto';
@@ -442,7 +442,9 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
     const since = now - DAY_SEC;
     const items: FeedItem[] = [];
     if (kind !== 'freebies') {
-      const posts = await loadUnifiedPosts(req.userId!, since);
+      // Как у планировщика: приватные каналы на паузе, пока личная сессия требует входа заново.
+      const privatePaused = (await getSessionStatus(req.userId!)) === 'needs_reauth';
+      const posts = await loadUnifiedPosts(req.userId!, since, undefined, !privatePaused);
       for (const p of posts.slice(0, limit)) {
         items.push({
           kind: 'post',
@@ -461,7 +463,7 @@ export async function createApp(userBot: IUserBotReader, bot?: AppBotOptions) {
         items.push({
           kind: 'deal',
           id: `deal:${deal.id}`,
-          at: deal.foundAt,
+          at: deal.publishedAt,
           title: STORE_LABELS[deal.store],
           text: deal.title.slice(0, 500),
           link: deal.url,

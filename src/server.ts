@@ -7,6 +7,7 @@ import { createApp } from './app';
 import { createAlertBot, AlertBot } from './modules/BotModule/bot';
 import { startWorker } from './modules/AlertModule/scheduler';
 import { TelegramNotifier } from './modules/AlertModule/notifier';
+import { startFreebiesWorker } from './modules/FreebiesModule/runner';
 import { getDb, closeDb } from './db/database';
 import { ensureDefaultUser, migrateLegacyData, removeSharedSessionDuplicate } from './db/bootstrap';
 import { tryAcquireLease, releaseLease } from './db/locksRepo';
@@ -68,6 +69,7 @@ async function main() {
   let shuttingDown = false;
   let renewTimer: NodeJS.Timeout | undefined;
   let stopWorker: (() => void) | undefined;
+  let stopFreebies: (() => void) | undefined;
 
   const shutdown = async () => {
     if (shuttingDown) return;
@@ -75,6 +77,7 @@ async function main() {
     logger.info('Останавливаюсь...');
     clearInterval(renewTimer);
     stopWorker?.();
+    stopFreebies?.();
     server.close();
     await alertBot?.stop().catch(() => {});
     if (holdsLease) {
@@ -127,6 +130,8 @@ async function main() {
     notifier: alertBot && botToken ? new TelegramNotifier(botToken) : undefined,
   });
   logger.info('Планировщик алертов запущен');
+  stopFreebies = startFreebiesWorker();
+  logger.info('Опрос источников халявы запущен');
 }
 
 main().catch((error) => {
