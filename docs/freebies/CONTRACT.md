@@ -136,7 +136,6 @@ export interface FeedItem {
 
 ```ts
 export interface RawDeal {
-  externalId: string | null;
   title: string;
   text: string;
   url: string;
@@ -318,4 +317,4 @@ export async function listRecentDeals(since: number, filter: { stores?: StoreCod
 
 ## 6. Примеры данных
 
-`docs/freebies/mock-deals.json`: ответы `GET /api/freebies/deals`, `GET /api/feed?kind=all` и `GET /api/freebies/settings` в формате выше. Промокоды и ссылки в нём выдуманы, это не настоящие акции.
+`docs/freebies/mock-deals.json`: ответы `GET /api/freebies/deals`, `GET /api/feed?kind=all` и `GET /api/freebies/settings` в формате выше. Промокоды и ссылки в нём выдуманы, это не настоящие акции. Теперь это только документация формы ответов: `public/` его не использует, интерфейс работает на настоящих адресах.

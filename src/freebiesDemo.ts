@@ -79,15 +79,15 @@ async function seed(now: number): Promise<number> {
   const live: { key: string; raw: RawDeal }[] = [
     {
       key: 'tg-promokodi-goldapple',
-      raw: { externalId: null, title: 'Демо: Золотое Яблоко', text: 'В Золотом Яблоке промокод `DEMOLIVE30`. -30% на уход, ещё 3 часа', url: 'https://t.me/demo/1', publishedAt: now - 120 },
+      raw: { title: 'Демо: Золотое Яблоко', text: 'В Золотом Яблоке промокод `DEMOLIVE30`. -30% на уход, ещё 3 часа', url: 'https://t.me/demo/1', publishedAt: now - 120 },
     },
     {
       key: 'tg-wildberries',
-      raw: { externalId: null, title: 'Демо: Wildberries', text: 'Кроссовки на WB со скидкой 55% по промокоду `KROSSDEMO`. Только сегодня', url: 'https://t.me/demo/2', publishedAt: now - 600 },
+      raw: { title: 'Демо: Wildberries', text: 'Кроссовки на WB со скидкой 55% по промокоду `KROSSDEMO`. Только сегодня', url: 'https://t.me/demo/2', publishedAt: now - 600 },
     },
     {
       key: 'tg-wildberries',
-      raw: { externalId: null, title: 'Демо: Wildberries без промокода', text: 'Пуховики на WB со скидкой 40% на всю коллекцию', url: 'https://t.me/demo/3', publishedAt: now - 2400 },
+      raw: { title: 'Демо: Wildberries без промокода', text: 'Пуховики на WB со скидкой 40% на всю коллекцию', url: 'https://t.me/demo/3', publishedAt: now - 2400 },
     },
   ];
   for (const { key, raw } of live) {

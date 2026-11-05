@@ -422,7 +422,7 @@ export async function deferSource(id: number, now: number, nextCheckAt: number):
   await db.execute({ sql: 'UPDATE deal_sources SET last_checked_at = ?, next_check_at = ? WHERE id = ?', args: [now, nextCheckAt, id] });
 }
 
-export async function disableSource(id: number, reason: 'robots' | 'errors' | 'manual', now: number): Promise<void> {
+export async function disableSource(id: number, reason: 'robots' | 'errors', now: number): Promise<void> {
   const db = await getDb();
   await db.execute({
     sql: 'UPDATE deal_sources SET is_active = 0, disabled_reason = ?, last_checked_at = ? WHERE id = ?',

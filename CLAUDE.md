@@ -82,7 +82,8 @@ npm run dev          # старт сервера разработки (ts-node s
 npm run build        # tsc → dist/
 npm start            # прод-запуск (тоже ts-node, см. package.json)
 npm run generate-session   # разовая генерация SESSION_STRING для .env
-npm test             # node:test, 133 теста
+npm test             # node:test, 199 тестов
+npm run demo:freebies # демо халявы: база в памяти, без Telegram и сети, 127.0.0.1:3099
 ```
 
 Тесты запускаются явным списком файлов (`node --require ts-node/register

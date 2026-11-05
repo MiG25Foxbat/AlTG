@@ -20,7 +20,6 @@ const msk = (date: string) => ts(`${date}T23:59:59+03:00`);
 
 /** Сырая запись из текста примера (слова кода - в обратных кавычках, как делает адаптер). */
 const raw = (text: string, publishedAt: string, hosts: string[] = []): RawDeal => ({
-  externalId: null,
   title: text.split('\n')[0].replace(/`/g, ''),
   text,
   url: 'https://t.me/sample/1',
@@ -30,14 +29,13 @@ const raw = (text: string, publishedAt: string, hosts: string[] = []): RawDeal =
 
 const beauty = () => tmeAdapter.parse(fixture('tme-promokodi-beauty.html'), 'text/html');
 const goldapple = () => tmeAdapter.parse(fixture('tme-promokodi-goldapple.html'), 'text/html');
-const post = (raws: RawDeal[], id: number) => raws.find((r) => r.externalId!.endsWith(`/${id}`))!;
+const post = (raws: RawDeal[], id: number) => raws.find((r) => r.url.endsWith(`/${id}`))!;
 
 // --- Адаптер t.me/s ---
 
 test('адаптер t.me/s: id, текст, время из time[datetime], ссылка на пост; без владельца, автора, пересылки и ответа', () => {
   const [first, ...rest] = tmeAdapter.parse(fixture('tme-sample-post.html'), 'text/html');
   assert.equal(rest.length, 0, 'пост из одной картинки без текста не берётся');
-  assert.equal(first.externalId, 'sample_channel/2295');
   assert.equal(first.url, 'https://t.me/sample_channel/2295');
   assert.equal(first.publishedAt, ts('2026-11-02T04:54:01Z')); // а не 23:54 из подписи тега
   assert.equal(first.title, 'В Золотом Яблоке новый промокод до 5 ноября');
@@ -67,7 +65,7 @@ test('пример 1: ЗЯ, код, лесенка процентов, срок 
   assert.equal(d.discountPercent, 20);
   assert.equal(d.discountText, '-10% от 6000₽, -20% от 12000₽');
   assert.equal(d.expiresAt, msk('2026-11-05'));
-  assert.equal(d.url, 'https://t.me/' + post(beauty(), 2295).externalId); // ссылка на пост, не реферал
+  assert.equal(d.url, 'https://t.me/promokodi_skidki_beauty/2295'); // ссылка на пост, не реферал
 });
 
 test('пример 2: магазин не назван в тексте - берётся магазин источника', () => {

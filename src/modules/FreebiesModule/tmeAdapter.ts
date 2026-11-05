@@ -60,7 +60,6 @@ export const tmeAdapter: SourceAdapter = {
       const text = htmlToText(textHtml);
       if (!text) return;
       result.push({
-        externalId: mark[1],
         title: text.split('\n')[0].replace(/`/g, '').replace(/[\s:]+$/, ''),
         text,
         // Партнёрскую ссылку из текста не берём: ведём на сам пост.
