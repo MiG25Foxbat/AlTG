@@ -64,3 +64,6 @@ Thumbs.db
 
 # Выгрузки разведчика Firecrawl
 /.firecrawl/
+
+# Отчёты проверки источников халявы (npx ts-node src/freebiesCheck.ts)
+/.freebies-check/

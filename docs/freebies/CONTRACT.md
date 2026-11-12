@@ -305,7 +305,7 @@ export async function listRecentDeals(since: number, filter: { stores?: StoreCod
 
 | Владелец | Файлы |
 |---|---|
-| главная сессия (team-lead) | `docs/freebies/CONTRACT.md`, `docs/freebies/STATUS.md`, `docs/freebies/mock-deals.json`, `docs/freebies/HANDOFF.md`, `docs/freebies/LAUNCH.md`, `CLAUDE.md`, `README.md`, `.gitignore`, `.claude/` |
+| главная сессия (team-lead) | `docs/freebies/CONTRACT.md`, `docs/freebies/STATUS.md`, `docs/freebies/mock-deals.json`, `docs/freebies/HANDOFF.md`, `docs/freebies/LAUNCH.md`, `CLAUDE.md`, `README.md`, `.gitignore`, `.claude/`, `src/freebiesCheck.ts` (проверка источников: `npx ts-node src/freebiesCheck.ts [префиксы ключей]`, отчёт в `.freebies-check/`) |
 | freebies-scout | `docs/freebies/SOURCES.md`, `docs/freebies/DEAL_EXAMPLES.md`, папка `.firecrawl/` |
 | freebies-backend | папка `src/modules/FreebiesModule/`, `src/db/dealsRepo.ts`, `src/modules/AlertModule/dealDelivery.ts`, `src/modules/AiModule/llmClient.ts` (только новая функция для акций, старое не трогать), `src/tests/freebies*.test.ts`, папка `src/tests/fixtures/freebies/`, `src/freebiesDemo.ts` (демо-сервер: in-memory база, фейковый Telegram, без бота и без опроса, акции из примеров, только localhost; запуск `npm run demo:freebies`), общие `package.json`, `src/db/database.ts`, `src/app.ts`, `src/server.ts` |
 | freebies-ui | папка `public/` целиком, `src/modules/AlertModule/dealMessage.ts`, `src/modules/BotModule/dealBot.ts`, `src/modules/BotModule/bot.ts` (только подключение `/freebies` и `fr:`), `src/tests/dealMessage.test.ts`, `src/tests/dealBot.test.ts` |
