@@ -5,10 +5,10 @@ import { getDb } from './database';
  * Все времена - unix-секунды. Остальные модули импортируют типы отсюда.
  */
 
-export const STORES = ['goldapple', 'wildberries', 'ozon', 'letual', 'iledebeaute', 'podrygka', '4lapy', 'other'] as const;
+export const STORES = ['goldapple', 'wildberries', 'ozon', 'letual', 'iledebeaute', 'podrygka', '4lapy', 'rivegauche', 'detmir', 'lamoda', 'yandexmarket', 'other'] as const;
 export type StoreCode = (typeof STORES)[number];
 
-export const CATEGORIES = ['beauty', 'fashion', 'pets', 'contests', 'other'] as const;
+export const CATEGORIES = ['beauty', 'fashion', 'pets', 'kids', 'contests', 'other'] as const;
 export type CategoryCode = (typeof CATEGORIES)[number];
 
 export const STORE_LABELS: Record<StoreCode, string> = {
@@ -19,12 +19,17 @@ export const STORE_LABELS: Record<StoreCode, string> = {
   iledebeaute: 'Иль де Ботэ',
   podrygka: 'Подружка',
   '4lapy': 'Четыре лапы',
+  rivegauche: 'Рив Гош',
+  detmir: 'Детский мир',
+  lamoda: 'Lamoda',
+  yandexmarket: 'Яндекс Маркет',
   other: 'Другие магазины',
 };
 export const CATEGORY_LABELS: Record<CategoryCode, string> = {
   beauty: 'Красота',
   fashion: 'Мода',
   pets: 'Зоотовары',
+  kids: 'Детское',
   contests: 'Конкурсы и призы',
   other: 'Другое',
 };

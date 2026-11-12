@@ -89,6 +89,13 @@ test('фильтр: доверенный без скидки проходит, �
   assert.equal(SOURCES.filter((s) => s.defaults.trusted).length, 5);
 });
 
+test('официальный канал магазина: пост без названия магазина со скидкой проходит как магазин и категория источника', () => {
+  const raw = { title: 'Скидка 20% на конструкторы', text: 'Скидка 20% на конструкторы', url: 'https://t.me/detmir_shop/1', publishedAt: NOW - 60 };
+  const [d] = selectDeals([raw], defaultsOf('tg-detmir-official'), NOW);
+  assert.deepEqual([d.store, d.category, d.discountPercent], ['detmir', 'kids', 20]);
+  assert.deepEqual(selectDeals([{ ...raw, text: 'Новая коллекция' }], defaultsOf('tg-detmir-official'), NOW), [], 'недоверенный: без скидки и кода не проходит');
+});
+
 test('robots Подружки: шаблоны * и $, /actions/ разрешён, закрытое закрыто', () => {
   const r = parseRobots('User-agent: *\nDisallow: /*?*\nDisallow: *promotion*\nDisallow: /promo/\nAllow: */actions/aktsiya_promkodyi_2026/\n', 'gram-pervonah-freebies/1.0');
   assert.equal(r.allows('/actions/'), true);

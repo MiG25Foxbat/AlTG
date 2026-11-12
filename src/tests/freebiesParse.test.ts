@@ -332,4 +332,29 @@ test('в базу не попадает текст поста и данные л
   }
 });
 
+test('промокод обычным текстом: заглавный токен сразу за словом, в кавычках тоже; строчное слово кодом не считается', () => {
+  const now = ts('2026-11-11T09:05:00Z');
+  const [a] = extractDeals(raw('Продлили промокод ЧЁРНЫЙ до 16 ноября включительно', '2026-11-11T09:00:00Z'), { store: 'letual' }, now);
+  assert.deepEqual([a.promoCode, a.expiresAt], ['ЧЁРНЫЙ', msk('2026-11-16')]);
+  const [b] = extractDeals(raw('Новый промокод «SALE-15» на скидку 15% в Летуаль', '2026-11-11T09:00:00Z'), {}, now);
+  assert.deepEqual([b.promoCode, b.discountPercent], ['SALE-15', 15]);
+  const [c] = extractDeals(raw('Действует промокод на скидку 10% на весь ассортимент', '2026-11-11T09:00:00Z'), { store: 'letual' }, now);
+  assert.deepEqual([c.promoCode, c.discountPercent], [null, 10]);
+  for (const text of ['Промокод ДЛЯ всех покупателей: скидка 10%', 'ПРОМОКОД ТОЛЬКО СЕГОДНЯ, скидка 10%', 'Дарим промокод ВСЕМ подписчикам, скидка 10%']) {
+    assert.equal(extractDeals(raw(text, '2026-11-11T09:00:00Z'), { store: 'letual' }, now)[0].promoCode, null, text);
+  }
+  assert.equal(extractDeals(raw('Промокод PRIVET15 на скидку 15%', '2026-11-11T09:00:00Z'), { store: 'letual' }, now)[0].promoCode, 'PRIVET15');
+  // Код из <code> остаётся главным.
+  const [d] = extractDeals(raw('Промокод `REALCODE` вместо промокод OTHER1', '2026-11-11T09:00:00Z'), { store: 'letual' }, now);
+  assert.equal(d.promoCode, 'REALCODE');
+});
+
+test('бонусы с разрядами: «1 000 бонусов» и неразрывный пробел', () => {
+  const now = ts('2026-11-11T09:05:00Z');
+  for (const [text, want] of [['Дарим 1 000 бонусов за покупку', '1 000 бонусов'], ['Дарим 10 000 бонусов за покупку', '10 000 бонусов'], ['Дарим 500 бонусов', '500 бонусов']]) {
+    const [x] = extractDeals(raw(text, '2026-11-11T09:00:00Z'), { store: 'detmir' }, now);
+    assert.equal(x.discountText, want);
+  }
+});
+
 test.after(() => closeDb());

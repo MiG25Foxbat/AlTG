@@ -31,6 +31,10 @@ const STORE_WORDS: [StoreCode, string][] = [
   ['iledebeaute', `${L}(?:иль\\s+де\\s+бот\\p{L}*|iledebeaute)${R}`],
   ['podrygka', `${L}(?:подружк\\p{L}*|podrygka)${R}`],
   ['4lapy', `${L}(?:(?:четыре|4)\\s+лап\\p{L}*|4lapy)${R}`],
+  ['rivegauche', `${L}(?:рив\\s+гош\\p{L}*|rive\\s?gauche)${R}`],
+  ['detmir', `${L}(?:детск\\p{L}*\\s+мир\\p{L}*|detmir)${R}`],
+  ['lamoda', `${L}(?:lamoda|ламод\\p{L}*)${R}`],
+  ['yandexmarket', `${L}(?:яндекс\\s?маркет\\p{L}*|market\\.yandex)`],
 ];
 const STORE_HOSTS: [StoreCode, RegExp][] = [
   ['goldapple', /goldapple|gldppl/i],
@@ -40,6 +44,10 @@ const STORE_HOSTS: [StoreCode, RegExp][] = [
   ['iledebeaute', /iledebeaute/i],
   ['podrygka', /podrygka/i],
   ['4lapy', /4lapy/i],
+  ['rivegauche', /rivegauche/i],
+  ['detmir', /detmir/i],
+  ['lamoda', /lamoda/i],
+  ['yandexmarket', /market\.yandex|yandex\.market/i],
 ];
 
 function storeMentions(text: string): { store: StoreCode; at: number }[] {
@@ -55,6 +63,7 @@ function storeMentions(text: string): { store: StoreCode; at: number }[] {
 const CATEGORY_WORDS: [CategoryCode, RegExp][] = [
   ['pets', /корм|кошк|кошач|(?<!\p{L})кот(?!\p{L})|собак|питомц|(?<!\p{L})зоо/iu],
   ['beauty', /косметик|уход|парфюм|помад|крем|красот|макияж|beauty|шампун/i],
+  ['kids', /детск|ребён|ребен|малыш|игрушк|подгузник/i],
   ['fashion', /обув|одежд|кроссовк|платье|куртк|сумк|джинс|футболк/i],
 ];
 
@@ -70,6 +79,8 @@ const PROMO_HINT = /промокод|промик|(?<!\p{L})код|купон|\d
 const QUIZ = /ответ|викторин/i;
 /** Слова в <code>, которые сами называют промокод, а не являются им. */
 const NOT_A_CODE = /^(?:промокод|промик|код|купон)\p{L}*$/iu;
+/** Служебные слова, которые после «промокод» бывают заглавными («ПРОМОКОД ТОЛЬКО СЕГОДНЯ»): слово целиком, не код. */
+const STOP = /^(?:для|вс[её]х|всем|все|при|только|вас|вам|тебе|наш\p{L}*|ваш\p{L}*|бесплатн\p{L}*|скидк\p{L}*|подарок|сегодня|сейчас|здесь|внутри|ниже)$/iu;
 
 // --- Скидка ---
 
@@ -77,7 +88,8 @@ const DASHES = '-–—−';
 // Фраза скидки до конца предложения; точка внутри слова («М.Косметик», «5.11») её не обрывает.
 const PERCENT = new RegExp(`[${DASHES}]?\\s*(\\d{1,2})\\s*%(?:[^\\n.;]|\\.(?=\\S))*`, 'g');
 const RUBLES = /\d[\d ]{0,8}\s?(?:₽|руб\p{L}*)(?:[^\n.;]|\.(?=\S))*/giu;
-const BONUS = /(\d{2,5})\s*бонус\p{L}*/iu;
+// Разряды через пробел или неразрывный пробел: «1 000 бонусов», «10 000».
+const BONUS = /(\d{1,3}(?:[  ]\d{3})+|\d{2,5})\s*бонус\p{L}*/iu;
 
 function cleanClause(s: string): string {
   return s
@@ -103,7 +115,7 @@ function parseDiscount(s: string, allowRubles: boolean): { percent: number | nul
     if (rub) return { percent: null, text: cleanClause(rub).slice(0, 100) };
   }
   const bonus = BONUS.exec(s);
-  return bonus ? { percent: null, text: `${bonus[1]} бонусов` } : null;
+  return bonus ? { percent: null, text: `${bonus[1].replace(/\s/g, ' ')} бонусов` } : null;
 }
 
 // --- Срок (МСК) ---
@@ -168,6 +180,14 @@ function findCodes(text: string): CodeAt[] {
     const code = m[1].trim();
     if (CODE_TOKEN.test(code) && /\p{L}/u.test(code) && !NOT_A_CODE.test(code) && !codes.some((c) => c.code.toUpperCase() === code.toUpperCase())) {
       codes.push({ code, start: m.index!, end: m.index! + m[0].length });
+    }
+  }
+  // Официальные каналы пишут код без <code>: «промокод ЧЁРНЫЙ». Только ЗАГЛАВНЫЙ токен сразу за словом: «промокод на скидку» кодом не считается.
+  if (codes.length === 0) {
+    for (const m of text.matchAll(/промокод\p{L}*[\s:]*[«"“]?/giu)) {
+      const at = m.index! + m[0].length;
+      const code = /^[\p{Lu}\d][\p{Lu}\d-]{2,19}(?![\p{L}\d])/u.exec(text.slice(at))?.[0];
+      if (code && /\p{L}/u.test(code) && !NOT_A_CODE.test(code) && !STOP.test(code) && !codes.some((c) => c.code === code)) codes.push({ code, start: at, end: at + code.length });
     }
   }
   return codes;

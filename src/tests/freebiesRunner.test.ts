@@ -367,12 +367,12 @@ test('startFreebiesWorker: пишет источники из SOURCES в баз�
   }
   stop();
   assert.equal(sources.length, SOURCES.length);
-  assert.deepEqual(tg().map((s) => s.url), [
+  assert.deepEqual(tg().slice(0, 3).map((s) => s.url), [
     'https://t.me/s/promokodi_skidki_beauty',
     'https://t.me/s/Promokodi_zolotoe_yabloko',
     'https://t.me/s/wildberriesru_official',
   ]);
-  assert.deepEqual(tg().map((s) => [s.kind, s.intervalSec, s.isActive]), [['html', 120, true], ['html', 120, true], ['html', 300, true]]);
+  assert.deepEqual(tg().slice(0, 3).map((s) => [s.kind, s.intervalSec, s.isActive]), [['html', 120, true], ['html', 120, true], ['html', 300, true]]);
   // Пустая страница вместо акций: страницы с __NEXT_DATA__ дают неудачу разбора, а не тихий пустой успех.
   assert.equal(sources.find((s) => s.key === 'web-iledebeaute')!.failCount, 1);
   assert.equal(new Set(requested.filter((u) => u.endsWith('/robots.txt'))).size, 6, 'по одному robots.txt на хост');

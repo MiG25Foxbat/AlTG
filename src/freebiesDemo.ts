@@ -69,6 +69,7 @@ async function seed(now: number): Promise<number> {
   let saved = 0;
 
   for (const config of SOURCES) {
+    if (!FIXTURES[config.key]) continue; // официальные каналы магазинов (tg-…-official) в демо без примеров
     const html = fs.readFileSync(path.join(__dirname, 'tests', 'fixtures', 'freebies', FIXTURES[config.key]), 'utf8');
     const raws = config.adapter.parse(html, 'text/html');
     const newest = Math.max(...raws.map((r) => r.publishedAt ?? 0));
