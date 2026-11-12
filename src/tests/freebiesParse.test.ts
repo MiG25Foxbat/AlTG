@@ -88,8 +88,8 @@ test('пример 3: один пост про два магазина дает 
     assert.equal(d.discountText, '20% на ассортимент бренда Cozy Home');
     assert.equal(d.expiresAt, msk('2026-11-04'));
   }
-  // Фильтр первого захода оставляет только Wildberries.
-  assert.deepEqual(selectDeals([post(beauty(), 2305)], {}, ts('2026-11-04T12:00:00Z')).map((d) => d.store), ['wildberries']);
+  // Магазин распознан - проходят оба.
+  assert.deepEqual(selectDeals([post(beauty(), 2305)], {}, ts('2026-11-04T12:00:00Z')).map((d) => d.store), ['ozon', 'wildberries']);
 });
 
 test('пример 4: WB, длинное тире в проценте, срок один день', () => {
@@ -182,11 +182,11 @@ test('примеры 12-15, 20: мусор отбрасывается', () => {
     raw('Микроволновая печь Comfee CMW720M06W, 20 л. Цена: 4 201₽', '2026-11-03T13:00:00Z'),
   ];
   assert.deepEqual(selectDeals(junk, { store: 'wildberries' }, now), []);
-  // Пример 20: код есть, но магазин Ozon - вне первого захода.
+  // Пример 20: Ozon распознан - проходит.
   const ozon = raw('Скидка 40% на всю косметику SOKOLOV на OZON до 25.10. `A3AF662791B3`. Действует на первый и все повторные заказы', '2026-10-23T09:00:00Z');
   const [d] = extractDeals(ozon, {}, ts('2026-10-23T09:05:00Z'));
   assert.deepEqual([d.store, d.promoCode, d.discountPercent, d.expiresAt], ['ozon', 'A3AF662791B3', 40, msk('2026-10-25')]);
-  assert.deepEqual(selectDeals([ozon], {}, ts('2026-10-23T09:05:00Z')), []);
+  assert.deepEqual(selectDeals([ozon], {}, ts('2026-10-23T09:05:00Z')).map((x) => x.store), ['ozon']);
 });
 
 test('слово «промокод» в <code> не становится кодом', () => {

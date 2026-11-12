@@ -8,10 +8,13 @@ import { RawDeal, SourceAdapter } from './types';
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
 
-function decodeEntities(s: string): string {
+/** Символ по коду; больше 0x10FFFF - null (сущность остаётся как есть, а не RangeError на чужой странице). */
+const codePoint = (n: number) => (n <= 0x10ffff ? String.fromCodePoint(n) : null);
+
+export function decodeEntities(s: string): string {
   return s
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => codePoint(parseInt(h, 16)) ?? m)
+    .replace(/&#(\d+);/g, (m, d) => codePoint(Number(d)) ?? m)
     .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m);
 }
 

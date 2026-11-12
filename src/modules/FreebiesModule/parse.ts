@@ -10,11 +10,11 @@ import { RawDeal } from './types';
 export interface ParseDefaults {
   store?: StoreCode;
   category?: CategoryCode;
+  /** Официальная страница акций или лента конкурсов: каждая запись - акция, скидка и промокод не обязательны, нейросеть не зовём */
+  trusted?: boolean;
 }
 export type ParsedDeal = Omit<NewDeal, 'sourceId' | 'muted'>;
 
-/** Первый заход (ponytail: список магазинов расширяется здесь, остальные уходят в other и отбрасываются). */
-export const FIRST_RUN_STORES: readonly StoreCode[] = ['goldapple', 'wildberries'];
 const DAY = 86400;
 const MSK = 3 * 3600;
 
@@ -27,11 +27,19 @@ const STORE_WORDS: [StoreCode, string][] = [
   ['goldapple', `золот\\p{L}*\\s+яблок|${L}зя${R}|gold\\s?apple`],
   ['wildberries', `${L}wb${R}|wildberries|вайлд?берр?из`],
   ['ozon', `${L}(?:ozon|озон)${R}`],
+  ['letual', `${L}(?:л[еэ]туал\\p{L}*|letu)${R}`],
+  ['iledebeaute', `${L}(?:иль\\s+де\\s+бот\\p{L}*|iledebeaute)${R}`],
+  ['podrygka', `${L}(?:подружк\\p{L}*|podrygka)${R}`],
+  ['4lapy', `${L}(?:(?:четыре|4)\\s+лап\\p{L}*|4lapy)${R}`],
 ];
 const STORE_HOSTS: [StoreCode, RegExp][] = [
   ['goldapple', /goldapple|gldppl/i],
   ['wildberries', /wildberries|(^|\.)wb\.ru$/i],
   ['ozon', /ozon/i],
+  ['letual', /(^|\.)letu\.ru$/i],
+  ['iledebeaute', /iledebeaute/i],
+  ['podrygka', /podrygka/i],
+  ['4lapy', /4lapy/i],
 ];
 
 function storeMentions(text: string): { store: StoreCode; at: number }[] {
@@ -101,10 +109,10 @@ function parseDiscount(s: string, allowRubles: boolean): { percent: number | nul
 // --- Срок (МСК) ---
 
 const MONTH = 'янв|фев|мар|апр|ма[яй]|июн|июл|авг|сен|окт|ноя|дек';
-const MONTH_NUMBER: Record<string, number> = { янв: 1, фев: 2, мар: 3, апр: 4, мая: 5, май: 5, июн: 6, июл: 7, авг: 8, сен: 9, окт: 10, ноя: 11, дек: 12 };
+export const MONTH_NUMBER: Record<string, number> = { янв: 1, фев: 2, мар: 3, апр: 4, мая: 5, май: 5, июн: 6, июл: 7, авг: 8, сен: 9, окт: 10, ноя: 11, дек: 12 };
 
 /** День, месяц и время по Москве -> unix; null, если даты не существует. Год не указан: от даты публикации. */
-function mskTime(day: number, month: number, year: number | undefined, h: number, mi: number, sec: number, ref: number): number | null {
+export function mskTime(day: number, month: number, year: number | undefined, h: number, mi: number, sec: number, ref: number): number | null {
   const at = (y: number) => {
     const d = new Date(Date.UTC(y, month - 1, day, h, mi, sec));
     return d.getUTCMonth() === month - 1 && d.getUTCDate() === day ? d.getTime() / 1000 - MSK : null;
@@ -167,6 +175,8 @@ function findCodes(text: string): CodeAt[] {
 
 /** Магазин для куска текста: ближайшее упоминание перед кодом, затем любое в посте, ссылки, магазин источника. */
 function pickStore(before: string, whole: string, hosts: string[], defaults: ParseDefaults): StoreCode {
+  // Доверенный источник знает свой магазин: упоминание другого в названии его не меняет.
+  if (defaults.trusted && defaults.store) return defaults.store;
   const near = storeMentions(before).pop();
   if (near) return near.store;
   const any = storeMentions(whole)[0];
@@ -184,14 +194,16 @@ export function extractDeals(raw: RawDeal, defaults: ParseDefaults, now: number)
   const title = raw.title.replace(/`/g, '').trim() || raw.text.replace(/`/g, '').split('\n')[0];
   const plain = raw.text.replace(/`/g, '');
   // Золотое яблоко - магазин косметики: без других подсказок категория красота.
-  const category = (store: StoreCode) => categoryFor(plain, defaults.category ?? (store === 'goldapple' ? 'beauty' : undefined));
+  const category = (store: StoreCode) =>
+    defaults.trusted && defaults.category ? defaults.category : categoryFor(plain, defaults.category ?? (store === 'goldapple' ? 'beauty' : undefined));
   const common = { title, url: raw.url, publishedAt };
   const hosts = raw.hosts ?? [];
   const codes = findCodes(raw.text);
 
   if (codes.length === 0) {
     const d = parseDiscount(plain, false);
-    if (!d) return [];
+    // Доверенному источнику скидка не нужна: акция есть сама по себе.
+    if (!d && !defaults.trusted) return [];
     const store = pickStore(plain, plain, hosts, defaults);
     return [
       {
@@ -199,9 +211,9 @@ export function extractDeals(raw: RawDeal, defaults: ParseDefaults, now: number)
         category: category(store),
         store,
         promoCode: null,
-        discountPercent: d.percent,
-        discountText: d.text,
-        expiresAt: parseExpiry(plain, publishedAt),
+        discountPercent: d?.percent ?? null,
+        discountText: d?.text ?? null,
+        expiresAt: raw.expiresAt ?? parseExpiry(plain, publishedAt),
       },
     ];
   }
@@ -220,12 +232,15 @@ export function extractDeals(raw: RawDeal, defaults: ParseDefaults, now: number)
       promoCode: c.code,
       discountPercent: d?.percent ?? null,
       discountText: d?.text ?? null,
-      expiresAt: parseExpiry(after, publishedAt) ?? parseExpiry(pre, publishedAt),
+      expiresAt: raw.expiresAt ?? parseExpiry(after, publishedAt) ?? parseExpiry(pre, publishedAt),
     };
   });
 }
 
-/** Простой фильтр первого захода: свежая, магазин из списка, есть промокод или скидка, срок не вышел. */
+/**
+ * Простой фильтр: свежая, срок не вышел; доверенный источник - всё подряд, остальные - распознанный магазин
+ * и промокод или скидка.
+ */
 export function selectDeals(raws: RawDeal[], defaults: ParseDefaults, now: number): ParsedDeal[] {
   return raws
     .filter((r) => r.publishedAt === null || now - r.publishedAt <= DAY)
@@ -233,8 +248,7 @@ export function selectDeals(raws: RawDeal[], defaults: ParseDefaults, now: numbe
     .flatMap((r) => extractDeals(r, defaults, now))
     .filter(
       (d) =>
-        FIRST_RUN_STORES.includes(d.store) &&
-        (d.promoCode !== null || d.discountPercent !== null || d.discountText !== null) &&
+        (defaults.trusted || (d.store !== 'other' && (d.promoCode !== null || d.discountPercent !== null || d.discountText !== null))) &&
         (d.expiresAt === null || d.expiresAt > now)
     );
 }

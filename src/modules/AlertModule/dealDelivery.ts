@@ -4,6 +4,7 @@ import {
   FreebiesSettings,
   dealFromRow,
   getDealsByIds,
+  isSlowSource,
   parseSettings,
 } from '../../db/dealsRepo';
 import { getDb } from '../../db/database';
@@ -18,12 +19,14 @@ import { buildDealMessage } from './dealMessage';
  * Время - unix-секунды, передаётся параметром.
  */
 
-/** Рассылается только свежее: опубликовано не раньше часа назад. */
+/** Рассылается только свежее: опубликовано не раньше часа назад (для медленных источников - суток). */
 export const DELIVER_WINDOW_SEC = 3600;
+export const SLOW_DELIVER_WINDOW_SEC = 24 * 3600;
 
-/** Одно правило «устарела» для рассылки и сухого прогона: срок вышел или от публикации больше часа. */
-export function isStaleForDelivery(deal: Pick<Deal, 'publishedAt' | 'expiresAt'>, now: number): boolean {
-  return (deal.expiresAt !== null && deal.expiresAt <= now) || deal.publishedAt < now - DELIVER_WINDOW_SEC;
+/** Одно правило «устарела» для рассылки и сухого прогона: срок вышел или от публикации больше окна (isSlowSource - сутки). */
+export function isStaleForDelivery(deal: Pick<Deal, 'publishedAt' | 'expiresAt'> & { sourceKey?: string }, now: number): boolean {
+  const window = isSlowSource(deal.sourceKey) ? SLOW_DELIVER_WINDOW_SEC : DELIVER_WINDOW_SEC;
+  return (deal.expiresAt !== null && deal.expiresAt <= now) || deal.publishedAt < now - window;
 }
 
 /** Магазины, категории, «только с промокодом» и минимальная скидка из настроек. */
@@ -85,7 +88,7 @@ async function listDeliverable(now: number): Promise<Deal[]> {
   const db = await getDb();
   const r = await db.execute({
     sql: `${DEAL_SELECT} WHERE d.published_at >= ? AND d.muted = 0 ORDER BY d.published_at, d.id`,
-    args: [now - DELIVER_WINDOW_SEC],
+    args: [now - SLOW_DELIVER_WINDOW_SEC], // широкое окно, точное - в isStaleForDelivery
   });
   return (r.rows as any[]).map((row) => dealFromRow(row, now)).filter((d) => !isStaleForDelivery(d, now));
 }

@@ -115,7 +115,7 @@ test('HTTP API халявы: вход, лента, акции, настройк�
     assert.equal(settings.body.settings.profile, null);
     assert.deepEqual(settings.body.settings.stores, ['goldapple']);
     assert.deepEqual(settings.body.stores[0], { code: 'goldapple', label: 'Золотое яблоко' });
-    assert.equal(settings.body.categories.length, 4);
+    assert.equal(settings.body.categories.length, 5);
 
     const patched = await api('/api/freebies/settings', { method: 'PATCH', body: JSON.stringify({ profile: 'freebies', minDiscount: 999, evil: 1 }) });
     assert.equal(patched.body.settings.profile, 'freebies');

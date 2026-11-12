@@ -6,7 +6,7 @@ process.env.DB_PATH = ':memory:';
 import { closeDb, getDb } from '../db/database';
 import { listSources, upsertSources, Source } from '../db/dealsRepo';
 import { USER_AGENT, createFreebiesRunner, startFreebiesWorker } from '../modules/FreebiesModule/runner';
-import { SourceConfig } from '../modules/FreebiesModule/sources';
+import { SOURCES, SourceConfig } from '../modules/FreebiesModule/sources';
 import { tmeAdapter } from '../modules/FreebiesModule/tmeAdapter';
 
 const T0 = Date.parse('2026-11-04T09:00:00Z') / 1000;
@@ -196,9 +196,33 @@ test('пять неудачных проверок подряд отключаю
   assert.equal(src.isActive, false);
   assert.equal(src.disabledReason, 'errors');
   const calls = s.net.calls.length;
-  s.clock.t = T0 + 100_000;
+  s.clock.t = T0 + 50_000; // раньше суток
   await s.runner.tick();
   assert.equal(s.net.calls.length, calls);
+});
+
+test('отключённый по ошибкам источник раз в сутки пробуется один раз: неудача откладывает на сутки, успех включает обратно', async () => {
+  let ok = false;
+  const s = await setup([A], (url) => (url.pathname === '/robots.txt' ? notFound() : ok ? new Response(page('chan_a', ['AAA111'])) : new Response('закрыто', { status: 403 })));
+  for (let i = 1; i <= 5; i++) {
+    s.clock.t = T0 + i * 1000;
+    await s.runner.tick();
+  }
+  assert.equal((await s.source()).isActive, false);
+
+  s.clock.t = T0 + 5000 + 86400; // сутки спустя: одна проба, не провалилась бы - без быстрых повторов
+  const before = s.net.pages().length;
+  await s.runner.tick();
+  assert.equal(s.net.pages().length, before + 1);
+  let src = await s.source();
+  assert.equal(src.isActive, false);
+  assert.equal(src.nextCheckAt, T0 + 2 * 86400 + 5000);
+
+  s.clock.t = src.nextCheckAt;
+  ok = true;
+  await s.runner.tick();
+  src = await s.source();
+  assert.deepEqual([src.isActive, src.disabledReason, src.failCount, src.lastOkAt], [true, null, 0, s.clock.t]);
 });
 
 test('429: ждём Retry-After, неудачей не считается, ожидание ограничено часом', async () => {
@@ -323,7 +347,7 @@ test('нейросеть: на первом (muted) опросе не зовёт
   assert.equal(saved.length, 2);
 });
 
-test('startFreebiesWorker: пишет три источника первого захода в базу, опрашивает и останавливается', async () => {
+test('startFreebiesWorker: пишет источники из SOURCES в базу, опрашивает по одному robots на хост и останавливается', async () => {
   const db = await getDb();
   await db.execute('DELETE FROM deal_sources');
   const requested: string[] = [];
@@ -336,19 +360,22 @@ test('startFreebiesWorker: пишет три источника первого �
   });
   const deadline = Date.now() + 3000;
   let sources = await listSources();
-  while (Date.now() < deadline && !(sources.length === 3 && sources.every((s) => s.lastOkAt !== null))) {
+  const tg = () => sources.filter((s) => s.key.startsWith('tg-'));
+  while (Date.now() < deadline && !(sources.length === SOURCES.length && tg().every((s) => s.lastOkAt !== null))) {
     await new Promise((resolve) => setTimeout(resolve, 20));
     sources = await listSources();
   }
   stop();
-  assert.deepEqual(sources.map((s) => s.url), [
+  assert.equal(sources.length, SOURCES.length);
+  assert.deepEqual(tg().map((s) => s.url), [
     'https://t.me/s/promokodi_skidki_beauty',
     'https://t.me/s/Promokodi_zolotoe_yabloko',
     'https://t.me/s/wildberriesru_official',
   ]);
-  assert.deepEqual(sources.map((s) => [s.kind, s.intervalSec, s.isActive]), [['html', 120, true], ['html', 120, true], ['html', 300, true]]);
-  assert.ok(sources.every((s) => s.lastOkAt !== null));
-  assert.equal(requested.filter((u) => u.endsWith('/robots.txt')).length, 1);
+  assert.deepEqual(tg().map((s) => [s.kind, s.intervalSec, s.isActive]), [['html', 120, true], ['html', 120, true], ['html', 300, true]]);
+  // Пустая страница вместо акций: страницы с __NEXT_DATA__ дают неудачу разбора, а не тихий пустой успех.
+  assert.equal(sources.find((s) => s.key === 'web-iledebeaute')!.failCount, 1);
+  assert.equal(new Set(requested.filter((u) => u.endsWith('/robots.txt'))).size, 6, 'по одному robots.txt на хост');
   const count = requested.length;
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(requested.length, count, 'после stop() запросов нет');

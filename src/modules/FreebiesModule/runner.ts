@@ -148,13 +148,13 @@ export function createFreebiesRunner(deps: RunnerDeps) {
   async function fail(source: Source, now: number, reason: string, crawlDelay: number | null = null) {
     retries.delete(source.id);
     const disabled = await markSourceFailed(source.id, now, nextAt(source, now, crawlDelay), MAX_FAILS);
-    logger.warn(`Халява: ${source.key}: ${reason}${disabled ? ` - источник отключён после ${MAX_FAILS} неудач подряд` : ''}`);
+    logger.warn(`Халява: ${source.key}: ${reason}${disabled && source.isActive ? ` - источник отключён после ${MAX_FAILS} неудач подряд` : ''}`);
   }
 
   /** Сбой сети или 5xx: два повтора через 5 и 30 секунд, потом неудача. */
   async function retryOrFail(source: Source, now: number, reason: string) {
     const n = retries.get(source.id) ?? 0;
-    if (n < RETRY_DELAYS_SEC.length) {
+    if (source.isActive && n < RETRY_DELAYS_SEC.length) { // суточная проба отключённого - одна проверка, без быстрых повторов
       retries.set(source.id, n + 1);
       await deferSource(source.id, now, now + RETRY_DELAYS_SEC[n]);
       return;

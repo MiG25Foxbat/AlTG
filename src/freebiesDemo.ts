@@ -43,6 +43,11 @@ const FIXTURES: Record<string, string> = {
   'tg-promokodi-beauty': 'tme-promokodi-beauty.html',
   'tg-promokodi-goldapple': 'tme-promokodi-goldapple.html',
   'tg-wildberries': 'tme-wildberries-official.html',
+  'web-iledebeaute': 'web-iledebeaute.html',
+  'web-4lapy': 'web-4lapy.html',
+  'web-podrygka': 'web-podrygka.html',
+  'web-proactions': 'web-proactions.xml',
+  'web-probnick': 'web-probnick.html',
 };
 
 /** Фейковый Telegram: канал «найден», постов за окно нет (посты ленты заложены в базу при старте). */

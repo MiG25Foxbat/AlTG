@@ -5,22 +5,27 @@ import { getDb } from './database';
  * Все времена - unix-секунды. Остальные модули импортируют типы отсюда.
  */
 
-export const STORES = ['goldapple', 'wildberries', 'ozon', 'other'] as const;
+export const STORES = ['goldapple', 'wildberries', 'ozon', 'letual', 'iledebeaute', 'podrygka', '4lapy', 'other'] as const;
 export type StoreCode = (typeof STORES)[number];
 
-export const CATEGORIES = ['beauty', 'fashion', 'pets', 'other'] as const;
+export const CATEGORIES = ['beauty', 'fashion', 'pets', 'contests', 'other'] as const;
 export type CategoryCode = (typeof CATEGORIES)[number];
 
 export const STORE_LABELS: Record<StoreCode, string> = {
   goldapple: 'Золотое яблоко',
   wildberries: 'Wildberries',
   ozon: 'Ozon',
+  letual: 'Летуаль',
+  iledebeaute: 'Иль де Ботэ',
+  podrygka: 'Подружка',
+  '4lapy': 'Четыре лапы',
   other: 'Другие магазины',
 };
 export const CATEGORY_LABELS: Record<CategoryCode, string> = {
   beauty: 'Красота',
   fashion: 'Мода',
   pets: 'Зоотовары',
+  contests: 'Конкурсы и призы',
   other: 'Другое',
 };
 
@@ -29,6 +34,14 @@ export type SourceKind = 'rss' | 'html' | 'json' | 'telegram';
 /** Считается от publishedAt: живая, могла закончиться (срока нет и прошло больше 15 минут), срок вышел. */
 export type DealStatus = 'live' | 'maybe_over' | 'expired';
 export const DEAL_FRESH_SEC = 15 * 60;
+/** Отключённый по ошибкам источник пробуется заново раз в сутки. */
+export const DISABLED_RETRY_SEC = 24 * 3600;
+
+/**
+ * Источник, где акция живёт днями (официальные страницы магазинов), а не минутами (Telegram).
+ * ponytail: эвристика по префиксу ключа; поле в deal_sources, если появятся быстрые 'web-' источники.
+ */
+export const isSlowSource = (key: string | undefined): boolean => !!key?.startsWith('web-');
 
 const DAY = 86400;
 /** Акции старше этого срока по found_at удаляются вместе с доставками. */
@@ -57,6 +70,7 @@ export interface Deal {
   sourceId: number;
   sourceTitle: string;
   sourceUrl: string;
+  sourceKey: string;
   store: StoreCode;
   category: CategoryCode;
   title: string;
@@ -179,9 +193,10 @@ export async function updateFreebiesSettings(userId: number, patch: unknown, now
 
 // --- Акции ---
 
-export function dealStatus(publishedAt: number, expiresAt: number | null, now: number): DealStatus {
+/** slow - медленный источник: без срока акция остаётся живой (isSlowSource). */
+export function dealStatus(publishedAt: number, expiresAt: number | null, now: number, slow = false): DealStatus {
   if (expiresAt !== null) return expiresAt <= now ? 'expired' : 'live';
-  return now - publishedAt > DEAL_FRESH_SEC ? 'maybe_over' : 'live';
+  return !slow && now - publishedAt > DEAL_FRESH_SEC ? 'maybe_over' : 'live';
 }
 
 /** Текст без HTML и лишних пробелов, по умолчанию как заголовок: не длиннее 200 символов. */
@@ -272,7 +287,7 @@ export async function existingDedupKeys(keys: string[]): Promise<Set<string>> {
   return new Set((r.rows as any[]).map((row) => row.dedup_key as string));
 }
 
-export const DEAL_SELECT = `SELECT d.id, d.source_id, s.title AS source_title, s.site_url, d.store, d.category, d.title, d.url,
+export const DEAL_SELECT = `SELECT d.id, d.source_id, s.title AS source_title, s.site_url, s.key AS source_key, d.store, d.category, d.title, d.url,
        d.promo_code, d.discount_percent, d.discount_text, d.expires_at, d.published_at, d.found_at, d.muted
   FROM deals d JOIN deal_sources s ON s.id = d.source_id`;
 
@@ -282,6 +297,7 @@ export function dealFromRow(r: any, now: number): Deal {
     sourceId: r.source_id,
     sourceTitle: r.source_title,
     sourceUrl: r.site_url,
+    sourceKey: r.source_key,
     store: r.store,
     category: r.category,
     title: r.title,
@@ -292,7 +308,7 @@ export function dealFromRow(r: any, now: number): Deal {
     expiresAt: r.expires_at,
     publishedAt: r.published_at,
     foundAt: r.found_at,
-    status: dealStatus(r.published_at, r.expires_at, now),
+    status: dealStatus(r.published_at, r.expires_at, now, isSlowSource(r.source_key)),
   };
 }
 
@@ -377,17 +393,17 @@ export async function listSources(): Promise<Source[]> {
   return (r.rows as any[]).map(sourceFromRow);
 }
 
-/** Активные источники, которым пора на проверку, самые давние первыми. */
+/** Источники, которым пора на проверку, самые давние первыми: активные и отключённые по ошибкам (раз в сутки проба). */
 export async function listDueSources(now: number): Promise<Source[]> {
   const db = await getDb();
   const r = await db.execute({
-    sql: 'SELECT * FROM deal_sources WHERE is_active = 1 AND next_check_at <= ? ORDER BY next_check_at, id',
+    sql: "SELECT * FROM deal_sources WHERE (is_active = 1 OR disabled_reason = 'errors') AND next_check_at <= ? ORDER BY next_check_at, id",
     args: [now],
   });
   return (r.rows as any[]).map(sourceFromRow);
 }
 
-/** Успешная проверка (в том числе 304 и пустой разбор): сбрасывает ошибки, ставит last_ok_at. */
+/** Успешная проверка (в том числе 304 и пустой разбор): сбрасывает ошибки, ставит last_ok_at, включает источник обратно. */
 export async function markSourceOk(
   id: number,
   now: number,
@@ -397,20 +413,21 @@ export async function markSourceOk(
 ): Promise<void> {
   const db = await getDb();
   await db.execute({
-    sql: `UPDATE deal_sources SET fail_count = 0, last_ok_at = ?, last_checked_at = ?, next_check_at = ?,
+    sql: `UPDATE deal_sources SET fail_count = 0, is_active = 1, disabled_reason = NULL, last_ok_at = ?, last_checked_at = ?, next_check_at = ?,
             etag = COALESCE(?, etag), last_modified = COALESCE(?, last_modified) WHERE id = ?`,
     args: [now, now, nextCheckAt, etag, lastModified, id],
   });
 }
 
-/** Неудачная проверка; на maxFails подряд источник отключается сам. Возвращает true, если отключили. */
+/** Неудачная проверка; на maxFails подряд источник отключается сам (следующая проба через сутки). Возвращает true, если отключён. */
 export async function markSourceFailed(id: number, now: number, nextCheckAt: number, maxFails: number): Promise<boolean> {
   const db = await getDb();
   await db.execute({
-    sql: `UPDATE deal_sources SET fail_count = fail_count + 1, last_checked_at = ?, next_check_at = ?,
+    sql: `UPDATE deal_sources SET fail_count = fail_count + 1, last_checked_at = ?,
+            next_check_at = CASE WHEN fail_count + 1 >= ? THEN ? ELSE ? END,
             is_active = CASE WHEN fail_count + 1 >= ? THEN 0 ELSE is_active END,
             disabled_reason = CASE WHEN fail_count + 1 >= ? THEN 'errors' ELSE disabled_reason END WHERE id = ?`,
-    args: [now, nextCheckAt, maxFails, maxFails, id],
+    args: [now, maxFails, now + DISABLED_RETRY_SEC, nextCheckAt, maxFails, maxFails, id],
   });
   const r = await db.execute({ sql: 'SELECT is_active FROM deal_sources WHERE id = ?', args: [id] });
   return (r.rows[0] as any)?.is_active === 0;

@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 process.env.DB_PATH = ':memory:';
 
 import { closeDb, getDb } from '../db/database';
-import { NewDeal, listSources, saveDeal, updateFreebiesSettings, upsertSources } from '../db/dealsRepo';
+import { NewDeal, dealStatus, listSources, saveDeal, updateFreebiesSettings, upsertSources } from '../db/dealsRepo';
 import { linkPrivateChat, setPause, Destination } from '../db/destinationsRepo';
-import { deliverDeals, matchesSettings, previewDeals } from '../modules/AlertModule/dealDelivery';
+import { deliverDeals, isStaleForDelivery, matchesSettings, previewDeals } from '../modules/AlertModule/dealDelivery';
 import { getFreebiesSettings } from '../db/dealsRepo';
 import { Notifier, OutgoingMessage, SendResult } from '../modules/AlertModule/notifier';
 import { RateLimiter, processOutbox } from '../modules/AlertModule/sender';
@@ -284,6 +284,18 @@ test('сухой прогон: причины, сообщение, ничего 
   assert.equal(p2.results.find((r) => r.deal.id === okId)!.reason, 'ok');
   const held = (await previewDeals(u.userId, { ...settings, stores: [] }, 600, NIGHT)).results.find((r) => r.deal.id === okId);
   assert.ok(!held || held.reason !== 'ok');
+});
+
+test('медленный источник (web-): без срока живая, окно рассылки сутки; Telegram как раньше', () => {
+  const NOW = 1_800_000_000;
+  const old = { publishedAt: NOW - 6 * 3600, expiresAt: null };
+  assert.equal(dealStatus(old.publishedAt, null, NOW, true), 'live');
+  assert.equal(dealStatus(old.publishedAt, null, NOW), 'maybe_over');
+  assert.equal(dealStatus(old.publishedAt, NOW - 1, NOW, true), 'expired');
+  assert.equal(isStaleForDelivery({ ...old, sourceKey: 'web-podrygka' }, NOW), false);
+  assert.equal(isStaleForDelivery({ ...old, sourceKey: 'tg-wildberries' }, NOW), true);
+  assert.equal(isStaleForDelivery({ publishedAt: NOW - 25 * 3600, expiresAt: null, sourceKey: 'web-podrygka' }, NOW), true);
+  assert.equal(isStaleForDelivery({ publishedAt: NOW - 60, expiresAt: NOW - 1, sourceKey: 'web-podrygka' }, NOW), true);
 });
 
 test.after(() => closeDb());

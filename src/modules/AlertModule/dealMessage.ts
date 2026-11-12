@@ -1,4 +1,4 @@
-import { Deal, STORE_LABELS, dealStatus } from '../../db/dealsRepo';
+import { Deal, STORE_LABELS, dealStatus, isSlowSource } from '../../db/dealsRepo';
 import { OutgoingPart, escapeHtml } from './messageFormat';
 import { formatMoscowTime } from '../../utils/time';
 
@@ -19,7 +19,7 @@ export function agoText(unixSeconds: number, now: number): string {
 
 export function buildDealMessage(deal: Deal, now: number): OutgoingPart {
   const head = [STORE_LABELS[deal.store], deal.discountText].filter(Boolean).map((t) => cut(t as string, 100)).join(' · ');
-  const status = dealStatus(deal.publishedAt, deal.expiresAt, now);
+  const status = dealStatus(deal.publishedAt, deal.expiresAt, now, isSlowSource(deal.sourceKey));
   const when = [
     `🕒 ${agoText(deal.publishedAt, now)}`,
     deal.expiresAt ? `до ${formatMoscowTime(deal.expiresAt)} МСК` : null,

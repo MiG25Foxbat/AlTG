@@ -12,6 +12,7 @@ const deal = (patch: Partial<Deal> = {}): Deal => ({
   sourceId: 1,
   sourceTitle: 'Pepper.ru',
   sourceUrl: 'https://www.pepper.ru/',
+  sourceKey: 'tg-test',
   store: 'goldapple',
   category: 'beauty',
   title: 'Минус 30% на уходовую косметику',

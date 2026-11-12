@@ -42,8 +42,8 @@ export async function ingestRawDeals(
   const fresh0 = [...keyed.entries()].filter(([key]) => !existing.has(key) && !rejectedKeys.has(key));
   let fresh = fresh0.map(([, d]) => d);
 
-  // При первой (muted) проверке источника нейросеть не зовём: эти акции всё равно не рассылаются.
-  if (classify && !muted && fresh.length > 0) {
+  // Нейросеть не зовём при первой (muted) проверке источника (эти акции не рассылаются) и для доверенных источников.
+  if (classify && !muted && !defaults.trusted && fresh.length > 0) {
     try {
       const batch = fresh.slice(0, LLM_BATCH);
       const verdicts = await classify(batch.map((d, index) => ({ index, text: (textByUrl.get(d.url) ?? d.title).slice(0, LLM_TEXT_CHARS) })));

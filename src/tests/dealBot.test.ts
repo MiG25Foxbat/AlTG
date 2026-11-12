@@ -54,14 +54,12 @@ test('магазины: из «все» убираем один, остальн�
   for (const b of buttons(storesScreen.edit)) assert.ok(Buffer.byteLength(b.callback_data!) <= 64);
 
   await handleFreebiesCallback(3, 'fr:s:ozon', NOW);
-  assert.deepEqual((await getFreebiesSettings(u)).stores, ['goldapple', 'wildberries', 'other']);
+  assert.deepEqual((await getFreebiesSettings(u)).stores, ['goldapple', 'wildberries', 'letual', 'iledebeaute', 'podrygka', '4lapy', 'other']);
 
   await handleFreebiesCallback(3, 'fr:s:ozon', NOW);
   assert.deepEqual((await getFreebiesSettings(u)).stores, []);
 
-  await handleFreebiesCallback(3, 'fr:s:goldapple', NOW);
-  await handleFreebiesCallback(3, 'fr:s:wildberries', NOW);
-  await handleFreebiesCallback(3, 'fr:s:ozon', NOW);
+  for (const c of ['goldapple', 'wildberries', 'ozon', 'letual', 'iledebeaute', 'podrygka', '4lapy']) await handleFreebiesCallback(3, `fr:s:${c}`, NOW);
   assert.deepEqual((await getFreebiesSettings(u)).stores, ['other']);
   const last = await handleFreebiesCallback(3, 'fr:s:other', NOW);
   assert.equal(last.toast, 'Нужен хотя бы один магазин');
